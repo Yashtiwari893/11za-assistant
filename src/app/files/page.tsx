@@ -291,7 +291,7 @@ export default function FilesPage() {
                             )}
                             <div className="flex gap-2 mt-2">
                                 <span className="text-xs bg-gray-200 text-gray-700 px-2 py-0.5 rounded">
-                                    {group.files.length} files
+                                    {(group.files?.length || 0)} files
                                 </span>
                             </div>
                         </div>
@@ -452,12 +452,26 @@ export default function FilesPage() {
                                         </p>
                                         <div className="flex items-center gap-2 bg-white p-2 rounded border border-blue-300">
                                             <code className="text-xs font-mono text-blue-900 flex-1">
-                                                https://neon-panda-chatbot.vercel.app/api/webhook/whatsapp
+                                                https://11za-assistant.vercel.app/api/webhook/whatsapp
                                             </code>
                                             <button
                                                 onClick={() => {
-                                                    navigator.clipboard.writeText("https://neon-panda-chatbot.vercel.app/api/webhook/whatsapp");
-                                                    alert("Webhook URL copied to clipboard!");
+                                                    const url = "https://11za-assistant.vercel.app/api/webhook/whatsapp";
+                                                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                                                        navigator.clipboard.writeText(url).then(() => alert("Webhook URL copied to clipboard!"));
+                                                    } else {
+                                                        const textArea = document.createElement("textarea");
+                                                        textArea.value = url;
+                                                        document.body.appendChild(textArea);
+                                                        textArea.select();
+                                                        try {
+                                                            document.execCommand('copy');
+                                                            alert("Webhook URL copied to clipboard!");
+                                                        } catch (err) {
+                                                            alert("Failed to copy. Please copy manually.");
+                                                        }
+                                                        document.body.removeChild(textArea);
+                                                    }
                                                 }}
                                                 className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
                                             >
@@ -551,10 +565,10 @@ export default function FilesPage() {
                                     )}
 
                                     {/* Files List */}
-                                    {selectedGroup && selectedGroup.files.length > 0 && (
+                                    {selectedGroup && (selectedGroup.files?.length || 0) > 0 && (
                                         <div>
                                             <h3 className="text-lg font-semibold mb-4">
-                                                Uploaded Files ({selectedGroup.files.length})
+                                                Uploaded Files ({(selectedGroup.files?.length || 0)})
                                             </h3>
 
                                             <div className="space-y-2">
@@ -586,7 +600,7 @@ export default function FilesPage() {
                                         </div>
                                     )}
 
-                                    {(!selectedGroup || selectedGroup.files.length === 0) && (
+                                    {(!selectedGroup || (selectedGroup.files?.length || 0) === 0) && (
                                         <div className="text-center py-12 text-gray-500">
                                             <p>No files uploaded yet.</p>
                                             <p className="text-sm mt-2">Upload your first PDF or image file above.</p>

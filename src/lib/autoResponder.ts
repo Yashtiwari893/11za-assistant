@@ -78,28 +78,21 @@ export async function generateAutoResponse(
         let auth_token = process.env.WHATSAPP_AUTH_TOKEN ?? ''
         let origin = process.env.WHATSAPP_ORIGIN ?? ''
 
-        // Exact match pehle
-        const { data: exactMatch } = await supabaseAdmin
+        // Exact match check
+        const { data: phoneMappings } = await supabaseAdmin
             .from('phone_document_mapping')
             .select('system_prompt, intent, auth_token, origin')
             .eq('phone_number', cleanTo)
             .limit(1)
 
-        // Fallback — koi bhi mapping
-        let phoneMappings = exactMatch
-        if (!phoneMappings || phoneMappings.length === 0) {
-            const { data: fallback } = await supabaseAdmin
-                .from('phone_document_mapping')
-                .select('system_prompt, intent, auth_token, origin')
-                .limit(1)
-            phoneMappings = fallback
-        }
-
         if (phoneMappings && phoneMappings.length > 0) {
             const m = phoneMappings[0]
             systemPromptBase = safeString(m.system_prompt)
+            // Only update token if DB has a specific one for THIS number
             auth_token = safeString(m.auth_token) || auth_token
             origin = safeString(m.origin) || origin
+        } else {
+            console.log(`[autoResponder] No specific DB config for ${cleanTo}. Using default environment credentials.`);
         }
 
         // ── GUARDRAIL 4: WhatsApp credentials check ───────────────
@@ -205,6 +198,11 @@ STRICT RULES:
                 sender_name: '11za Assistant',
                 event_type: 'MtMessage',
                 is_in_24_window: true,
+                raw_payload: { 
+                    source: 'auto_responder', 
+                    bot_response: true, 
+                    original_id: messageId 
+                },
             })
 
         if (insertErr) {

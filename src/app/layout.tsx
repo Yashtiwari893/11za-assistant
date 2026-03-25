@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     title: "ZARA — Your Personal Assistant on WhatsApp",
     description:
       "Reminders, lists, documents aur AI chat — sab kuch WhatsApp pe. No app download.",
-    url: "https://zara-your-personal-assistant-on-wha-tau.vercel.app",
+    url: "https://11za-assistant.vercel.app",
     siteName: "ZARA by 11za",
     locale: "en_IN",
     type: "website",

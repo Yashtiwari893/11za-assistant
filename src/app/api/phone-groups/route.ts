@@ -16,7 +16,13 @@ export async function GET() {
 
     if (error) throw error
 
-    return NextResponse.json({ success: true, groups: mappings })
+    // FIX: Each mapping must have a 'files' array to prevent frontend crash
+    const sanitized = (mappings || []).map(m => ({
+      ...m,
+      files: [] // Default for now, as frontend expects this
+    }))
+
+    return NextResponse.json({ success: true, groups: sanitized })
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : "Failed" },
