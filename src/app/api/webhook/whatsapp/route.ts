@@ -8,7 +8,7 @@ import {
 } from '@/lib/features/reminder'
 import {
   handleAddTask, handleListTasks, handleCompleteTask,
-  handleDeleteTask, handleListAllLists
+  handleDeleteTask
 } from '@/lib/features/task'
 import {
   handleSaveDocument, handleFindDocument, handleListDocuments
@@ -20,7 +20,7 @@ import { speechToText } from '@/lib/speechToText'
 import { generateAutoResponse } from '@/lib/autoResponder'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { logger, setTraceId } from '@/lib/infrastructure/logger'
-import { createErrorResponse, createError } from '@/lib/infrastructure/errorHandler'
+import { createErrorResponse } from '@/lib/infrastructure/errorHandler'
 import { validatePhone, validatePlainText } from '@/lib/infrastructure/inputValidator'
 import { retryWithExponentialBackoff } from '@/lib/infrastructure/errorHandler'
 import type { Language } from '@/lib/whatsapp/templates'
@@ -89,7 +89,11 @@ export async function POST(req: NextRequest) {
       .select('id')
       .eq('message_id', messageId)
       .limit(1)
-      .single()
+      .maybeSingle()
+
+    if (dupError) {
+      logger.warn('Pre-check duplicate query failed', { messageId, error: dupError.message })
+    }
 
     if (existingMsg) {
       logger.info('ℹ️ Duplicate message ignored', { messageId, traceId })
@@ -98,6 +102,8 @@ export async function POST(req: NextRequest) {
 
     // ─── LOG MESSAGE TO DATABASE ──────────────────────────
     try {
+      let duplicateDuringInsert = false
+
       await retryWithExponentialBackoff(async () => {
         const { error: logErr } = await supabaseAdmin.from('whatsapp_messages').insert([{
           message_id: messageId,
@@ -115,10 +121,20 @@ export async function POST(req: NextRequest) {
           trace_id: traceId,
         }])
 
-        if (logErr && (logErr as any).code !== '23505') {
+        if (logErr && (logErr as any).code === '23505') {
+          duplicateDuringInsert = true
+          return
+        }
+
+        if (logErr) {
           throw logErr
         }
       }, 2)
+
+      if (duplicateDuringInsert) {
+        logger.info('ℹ️ Duplicate message ignored after insert race', { messageId, traceId })
+        return NextResponse.json({ ok: true })
+      }
     } catch (logErr) {
       logger.error('Failed to log message', { messageId }, logErr as Error)
       // Continue anyway - don't block the flow
@@ -363,7 +379,7 @@ export async function POST(req: NextRequest) {
           break
 
         default: // UNKNOWN
-          const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+          await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
           break
       }
 
