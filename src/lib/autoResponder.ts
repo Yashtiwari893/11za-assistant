@@ -50,6 +50,19 @@ export async function generateAutoResponse(
     try {
         console.log('[autoResponder] Triggered')
 
+        // ── GUARDRAIL 0: Idempotency check ───────────────────────
+        const { data: alreadyResponded } = await supabaseAdmin
+            .from('whatsapp_messages')
+            .select('id')
+            .eq('message_id', messageId)
+            .eq('is_responded', true)
+            .maybeSingle()
+
+        if (alreadyResponded) {
+            console.log('[autoResponder] Already responded to:', messageId)
+            return { success: true, response: 'Duplicate prevention — already responded', sent: false }
+        }
+
         // ── GUARDRAIL 1: Input validation ─────────────────────────
         if (!fromNumber || !toNumber || !messageId) {
             return { success: false, error: 'Missing required parameters' }
