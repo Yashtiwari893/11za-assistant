@@ -78,12 +78,12 @@ export async function POST(req: NextRequest) {
     if (phoneNumbers) {
       const phones = phoneNumbers.split(',').map(p => p.trim()).filter(Boolean)
       for (const phone of phones) {
-        await supabaseAdmin.from('phone_document_mapping').insert({
+        await supabaseAdmin.from('phone_document_mapping').upsert({
           phone_number: phone,
           file_id: fileRecord.id,
           auth_token: authToken,
           origin
-        }).onConflict?.()
+        }, { onConflict: 'phone_number,file_id' })
         phoneMapped++
       }
     }
