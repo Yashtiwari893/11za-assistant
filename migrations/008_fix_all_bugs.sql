@@ -25,7 +25,10 @@ UPDATE reminders SET recurrence = NULL WHERE recurrence::text = 'none';
 ALTER TABLE reminders ALTER COLUMN recurrence DROP DEFAULT;
 
 -- FIX 5: due_reminders_view update - add recurrence fields needed by cron
-CREATE OR REPLACE VIEW due_reminders_view AS
+-- NOTE: CREATE OR REPLACE VIEW cannot rename/reorder existing view columns.
+-- Drop and recreate to avoid: 42P16 cannot change name of view column.
+DROP VIEW IF EXISTS due_reminders_view;
+CREATE VIEW due_reminders_view AS
 SELECT
     r.id as reminder_id,
     r.user_id,

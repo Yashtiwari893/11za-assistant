@@ -8,6 +8,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+type DueReminderRow = {
+  reminder_id: string
+  title: string
+  note: string | null
+  scheduled_at?: string
+  recurrence?: string | null
+  recurrence_time?: string | null
+  phone: string
+  language: string | null
+}
+
 function isAuthorizedCronRequest(req: Request): boolean {
   const cronSecret = process.env.CRON_SECRET
   if (!cronSecret) return false
@@ -30,9 +41,24 @@ async function processReminders(req: Request) {
   }
 
   try {
-    const { data: dueReminders, error } = await supabase
+    // Primary query expects the latest view shape.
+    const primary = await supabase
       .from('due_reminders_view')
-      .select('reminder_id, user_id, title, note, scheduled_at, recurrence, recurrence_time, phone, language')
+      .select('reminder_id, title, note, scheduled_at, recurrence, recurrence_time, phone, language')
+
+    let dueReminders = primary.data as DueReminderRow[] | null
+    let error = primary.error
+
+    // Backward-compatible fallback for environments with an older view definition.
+    if (error?.code === '42703') {
+      console.warn('[cron/reminders] Falling back to legacy due_reminders_view columns:', error.message)
+      const legacy = await supabase
+        .from('due_reminders_view')
+        .select('reminder_id, title, note, scheduled_at, phone, language')
+
+      dueReminders = legacy.data as DueReminderRow[] | null
+      error = legacy.error
+    }
 
     if (error) {
       console.error('[cron/reminders] DB fetch error:', error)
@@ -46,7 +72,7 @@ async function processReminders(req: Request) {
     console.log(`[cron/reminders] Processing ${dueReminders.length} reminders...`)
     let processed = 0, failed = 0
 
-    for (const reminder of dueReminders) {
+    for (const reminder of dueReminders as DueReminderRow[]) {
       try {
         const lang = (reminder.language as Language) ?? 'en'
         const noteText = reminder.note ? `\n📌 ${reminder.note}` : ''
