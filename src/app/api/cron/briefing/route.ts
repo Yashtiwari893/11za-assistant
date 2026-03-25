@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server'
 import { sendMorningBriefingToAll } from '@/lib/features/briefing'
 
 export async function GET(req: Request) {
-  const authHeader = (req as any).headers?.get?.('authorization')
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (req.headers.get('x-cron-secret') !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
   try {
