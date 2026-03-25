@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { v4 as uuid } from 'uuid'
 import { classifyIntent } from '@/lib/ai/intent'
 import { getOrCreateUser, handleOnboarding } from '@/lib/features/onboarding'
 import {
@@ -17,13 +18,14 @@ import { helpMessage } from '@/lib/whatsapp/templates'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import { speechToText } from '@/lib/speechToText'
 import { generateAutoResponse } from '@/lib/autoResponder'
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
+import { logger, setTraceId } from '@/lib/infrastructure/logger'
+import { createErrorResponse, createError } from '@/lib/infrastructure/errorHandler'
+import { validatePhone, validatePlainText } from '@/lib/infrastructure/inputValidator'
+import { retryWithExponentialBackoff } from '@/lib/infrastructure/errorHandler'
 import type { Language } from '@/lib/whatsapp/templates'
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabaseAdmin = getSupabaseClient()
 
 // BUG FIX: Proper MIME type resolver - was hardcoded 'image/jpeg' before
 function resolveMimeType(rawMime?: string | null, subType?: string | null): string {
@@ -53,77 +55,154 @@ function parseWebhookPayload(body: any) {
 }
 
 export async function POST(req: NextRequest) {
+  // ─── TRACE ID & LOGGING ────────────────────────────────
+  const traceId = uuid()
+  setTraceId(traceId)
+
   try {
     const body = await req.json()
-    console.log('📩 Webhook:', JSON.stringify(body, null, 2))
+    logger.info('📩 Webhook received', { traceId, eventType: body.event })
 
+    // ─── PARSE & VALIDATE WEBHOOK PAYLOAD ──────────────────
     const { phone, to, message, buttonId, mediaUrl, mediaType, mimeType, subType, messageId, name, event } = parseWebhookPayload(body)
 
-    if (!phone || !messageId) return NextResponse.json({ ok: true })
+    // ─── VALIDATE REQUIRED FIELDS ──────────────────────────
+    if (!phone || !messageId) {
+      logger.warn('Invalid webhook - missing required fields', { phone, messageId })
+      return NextResponse.json({ ok: true }) // Silent ignore
+    }
 
-    const { data: botCreds } = await supabaseAdmin
-      .from('phone_document_mapping')
-      .select('auth_token')
-      .eq('phone_number', to)
-      .limit(1)
-    const authToken = botCreds?.[0]?.auth_token || process.env.ELEVEN_ZA_API_KEY
-
-    const { error: logErr } = await supabaseAdmin.from('whatsapp_messages').insert([{
-      message_id: messageId,
-      channel: 'whatsapp',
-      from_number: phone,
-      to_number: to,
-      received_at: new Date().toISOString(),
-      content_type: mediaType,
-      content_text: message || null,
-      sender_name: name,
-      event_type: event,
-      is_in_24_window: true,
-      is_responded: false,
-      raw_payload: body,
-    }])
-
-    if (logErr && (logErr as any).code === '23505') {
-      console.log('ℹ️ Duplicate message ignored')
+    // ─── VALIDATE PHONE NUMBERS ────────────────────────────
+    let cleanFromPhone: string
+    let cleanToPhone: string
+    try {
+      cleanFromPhone = validatePhone(phone)
+      cleanToPhone = validatePhone(to)
+    } catch (err) {
+      logger.warn('Invalid phone format', { phone, to })
       return NextResponse.json({ ok: true })
     }
 
-    if (event !== 'MoMessage') return NextResponse.json({ ok: true })
+    // ─── MESSAGE DEDUPLICATION & LOGGING ───────────────────
+    const { data: existingMsg, error: dupError } = await supabaseAdmin
+      .from('whatsapp_messages')
+      .select('id')
+      .eq('message_id', messageId)
+      .limit(1)
+      .single()
 
-    const user = await getOrCreateUser(phone)
-    if (!user) return NextResponse.json({ ok: true })
+    if (existingMsg) {
+      logger.info('ℹ️ Duplicate message ignored', { messageId, traceId })
+      return NextResponse.json({ ok: true })
+    }
+
+    // ─── LOG MESSAGE TO DATABASE ──────────────────────────
+    try {
+      await retryWithExponentialBackoff(async () => {
+        const { error: logErr } = await supabaseAdmin.from('whatsapp_messages').insert([{
+          message_id: messageId,
+          channel: 'whatsapp',
+          from_number: cleanFromPhone,
+          to_number: cleanToPhone,
+          received_at: new Date().toISOString(),
+          content_type: mediaType,
+          content_text: message ? validatePlainText(message, 10000) : null,
+          sender_name: name ? validatePlainText(name, 100) : null,
+          event_type: event,
+          is_in_24_window: true,
+          is_responded: false,
+          raw_payload: body,
+          trace_id: traceId,
+        }])
+
+        if (logErr && (logErr as any).code !== '23505') {
+          throw logErr
+        }
+      }, 2)
+    } catch (logErr) {
+      logger.error('Failed to log message', { messageId }, logErr as Error)
+      // Continue anyway - don't block the flow
+    }
+
+    // ─── ONLY PROCESS INCOMING MESSAGES ────────────────────
+    if (event !== 'MoMessage') {
+      logger.debug('Ignored non-MoMessage event', { event })
+      return NextResponse.json({ ok: true })
+    }
+
+    // ─── GET OR CREATE USER (with retries) ─────────────────
+    let user = await retryWithExponentialBackoff(
+      () => getOrCreateUser(cleanFromPhone, name),
+      3
+    )
+
+    if (!user) {
+      logger.error('Failed to create user', { phone: cleanFromPhone })
+      return NextResponse.json({ ok: true }) // Silent fail
+    }
+
+    // ─── UPDATE USER NAME IF AVAILABLE ────────────────────
     if (name && !user.name) {
-      await supabaseAdmin.from('users').update({ name }).eq('id', user.id)
+      try {
+        await supabaseAdmin.from('users').update({ name: validatePlainText(name, 100) }).eq('id', user.id)
+      } catch (err) {
+        logger.warn('Failed to update user name', { userId: user.id })
+      }
     }
 
     const lang = (user.language as Language) ?? 'en'
 
+    // ─── HANDLE ONBOARDING FLOW ───────────────────────────
     if (!user.onboarded) {
       await handleOnboarding(user, message, buttonId)
       return NextResponse.json({ ok: true })
     }
 
+    // ─── PROCESS MESSAGE CONTENT ──────────────────────────
     let processedMessage = message
+
+    // Convert voice/audio to text
     if (mediaType === 'media' && (subType === 'voice' || subType === 'audio') && mediaUrl) {
-      const stt = await speechToText(mediaUrl, authToken)
-      processedMessage = stt?.text || message
-      console.log('🎙 Transcribed:', processedMessage)
+      try {
+        const { data: botCreds } = await supabaseAdmin
+          .from('phone_document_mapping')
+          .select('auth_token')
+          .eq('phone_number', cleanToPhone)
+          .limit(1)
+        const authToken = botCreds?.[0]?.auth_token || process.env.ELEVEN_ZA_API_KEY
+
+        const stt = await speechToText(mediaUrl, authToken)
+        processedMessage = stt?.text || message
+        logger.info('🎙 Voice transcribed', { userId: user.id, length: processedMessage?.length })
+      } catch (sttErr) {
+        logger.error('Speech-to-text failed', { userId: user.id }, sttErr as Error)
+        processedMessage = message // Fallback to original
+      }
     }
 
+    // ─── HANDLE IMAGE/DOCUMENT UPLOADS ─────────────────────
     const isImageOrDoc = mediaType === 'image' || mediaType === 'document' || subType === 'image' || subType === 'document'
     if (mediaUrl && isImageOrDoc && subType !== 'voice' && subType !== 'audio') {
-      // BUG FIX: Use resolveMimeType instead of hardcoded 'image/jpeg'
       const resolvedMime = resolveMimeType(mimeType, subType)
       await handleSaveDocument({
-        userId: user.id, phone, language: lang,
-        mediaUrl: mediaUrl!, mediaType: resolvedMime,
-        caption: processedMessage || undefined, authToken
+        userId: user.id,
+        phone: cleanFromPhone,
+        language: lang,
+        mediaUrl: mediaUrl!,
+        mediaType: resolvedMime,
+        caption: processedMessage || undefined,
+        authToken: undefined,
       })
       return NextResponse.json({ ok: true })
     }
 
-    if (!processedMessage?.trim()) return NextResponse.json({ ok: true })
+    // ─── EMPTY MESSAGE CHECK ──────────────────────────────
+    if (!processedMessage?.trim()) {
+      logger.debug('Empty message - ignoring')
+      return NextResponse.json({ ok: true })
+    }
 
+    // ─── LOAD SESSION CONTEXT ─────────────────────────────
     const { data: session } = await supabaseAdmin
       .from('sessions')
       .select('context')
@@ -131,121 +210,189 @@ export async function POST(req: NextRequest) {
       .single()
 
     const ctx = session?.context as any
+
+    // ─── HANDLE PENDING ACTIONS (e.g., awaiting document label) ─
     if (ctx?.pending_action === 'awaiting_label') {
-      const label = processedMessage.trim()
+      const label = processedMessage.trim().substring(0, 100)
       await supabaseAdmin.from('documents')
-        .update({ label })
+        .update({ label: validatePlainText(label, 100) })
         .eq('storage_path', ctx.document_path)
         .eq('user_id', user.id)
       await supabaseAdmin.from('sessions')
         .update({ context: {} })
         .eq('user_id', user.id)
       await sendWhatsAppMessage({
-        to: phone,
+        to: cleanFromPhone,
         message: lang === 'hi'
-          ? `📁 *${label}* ke naam se save ho gaya!\n\n_"${label} dikhao" bolke wapas paa sakte ho._`
+          ? `📁 *${label}* के नाम से save हो गया!\n\n_"${label} दिखाओ" बोलकर फिर से पा सकते हो।_`
           : `📁 Saved as *${label}*!\n\nSay "show ${label}" anytime to get it back.`
       })
       return NextResponse.json({ ok: true })
     }
 
-    const result = await classifyIntent(processedMessage, lang)
-    const { intent, extractedData } = result
-    console.log('🔍 Intent:', intent, extractedData)
+    // ─── INTENT CLASSIFICATION ───────────────────────────
+    logger.debug('Classifying intent', { userId: user.id })
+    const intentResult = await classifyIntent(processedMessage, lang)
 
-    switch (intent) {
-      case 'SET_REMINDER':
-        await handleSetReminder({
-          userId: user.id, phone, language: lang,
-          message: processedMessage,
-          dateTimeText: extractedData.dateTimeText,
-          reminderTitle: extractedData.reminderTitle
-        })
-        break
+    logger.info('Intent classified', {
+      userId: user.id,
+      intent: intentResult.intent,
+      confidence: intentResult.confidence,
+    })
 
-      case 'LIST_REMINDERS':
-        await handleListReminders({ userId: user.id, phone, language: lang })
-        break
-
-      // BUG FIX: Was calling handleListReminders() instead of handleCancelReminder()!
-      case 'CANCEL_REMINDER':
-        await handleCancelReminder({
-          userId: user.id, phone, language: lang,
-          titleHint: extractedData.reminderTitle
-        })
-        break
-
-      case 'SNOOZE_REMINDER':
-        await handleSnoozeReminder({
-          userId: user.id, phone, language: lang,
-          customText: extractedData.dateTimeText ?? processedMessage
-        })
-        break
-
-      case 'ADD_TASK':
-        await handleAddTask({
-          userId: user.id, phone, language: lang,
-          taskContent: extractedData.taskContent ?? processedMessage,
-          listName: extractedData.listName ?? 'general'
-        })
-        break
-
-      case 'LIST_TASKS':
-        if (extractedData.listName) {
-          await handleListTasks({ userId: user.id, phone, language: lang, listName: extractedData.listName })
-        } else {
-          await handleListAllLists({ userId: user.id, phone, language: lang })
-        }
-        break
-
-      case 'COMPLETE_TASK':
-        await handleCompleteTask({
-          userId: user.id, phone, language: lang,
-          taskContent: extractedData.taskContent ?? processedMessage,
-          listName: extractedData.listName
-        })
-        break
-
-      // BUG FIX: DELETE_TASK case was completely missing from switch!
-      case 'DELETE_TASK':
-        await handleDeleteTask({
-          userId: user.id, phone, language: lang,
-          taskContent: extractedData.taskContent ?? processedMessage,
-          listName: extractedData.listName
-        })
-        break
-
-      case 'FIND_DOCUMENT':
-        await handleFindDocument({
-          userId: user.id, phone, language: lang,
-          query: extractedData.documentQuery ?? processedMessage
-        })
-        break
-
-      case 'LIST_DOCUMENTS':
-        await handleListDocuments({ userId: user.id, phone, language: lang })
-        break
-
-      case 'GET_BRIEFING':
-        await handleGetBriefing({ userId: user.id, phone, language: lang })
-        break
-
-      case 'HELP':
-        await sendWhatsAppMessage({ to: phone, message: helpMessage(lang) })
-        break
-
-      case 'UNKNOWN':
-      default:
-        console.log('🤖 Falling back to RAG Chat')
-        await generateAutoResponse(phone, to, processedMessage, messageId)
-        break
+    // ─── CONFIDENCE THRESHOLD CHECK ────────────────────────
+    if (intentResult.confidence < 0.4) {
+      logger.warn('Low confidence intent - using auto-responder', {
+        intent: intentResult.intent,
+        confidence: intentResult.confidence,
+      })
+      const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+      if (autoResp.sent && autoResp.response) {
+        await supabaseAdmin.from('whatsapp_messages')
+          .update({ is_responded: true })
+          .eq('message_id', messageId)
+      }
+      return NextResponse.json({ ok: true })
     }
 
+    // ─── ROUTE TO FEATURE HANDLERS ────────────────────────
+    const { intent, extractedData } = intentResult
+
+    try {
+      switch (intent) {
+        case 'SET_REMINDER':
+          await handleSetReminder({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            message: processedMessage,
+            dateTimeText: extractedData.dateTimeText,
+            reminderTitle: extractedData.reminderTitle,
+          })
+          break
+
+        case 'LIST_REMINDERS':
+          await handleListReminders({ userId: user.id, phone: cleanFromPhone, language: lang })
+          break
+
+        case 'SNOOZE_REMINDER':
+          await handleSnoozeReminder({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            message: processedMessage,
+          })
+          break
+
+        case 'CANCEL_REMINDER':
+          await handleCancelReminder({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            message: processedMessage,
+          })
+          break
+
+        case 'ADD_TASK':
+          await handleAddTask({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            taskContent: extractedData.taskContent || processedMessage,
+            listName: extractedData.listName || 'general',
+          })
+          break
+
+        case 'LIST_TASKS':
+          await handleListTasks({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            listName: extractedData.listName || 'general',
+          })
+          break
+
+        case 'COMPLETE_TASK':
+          await handleCompleteTask({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            taskContent: extractedData.taskContent || processedMessage,
+          })
+          break
+
+        case 'DELETE_TASK':
+          await handleDeleteTask({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            taskContent: extractedData.taskContent || processedMessage,
+          })
+          break
+
+        case 'FIND_DOCUMENT':
+          await handleFindDocument({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            documentQuery: extractedData.documentQuery || processedMessage,
+          })
+          break
+
+        case 'LIST_DOCUMENTS':
+          await handleListDocuments({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+          })
+          break
+
+        case 'GET_BRIEFING':
+          await handleGetBriefing({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+          })
+          break
+
+        case 'HELP':
+          await sendWhatsAppMessage({
+            to: cleanFromPhone,
+            message: helpMessage(user.name, lang),
+          })
+          break
+
+        default: // UNKNOWN
+          const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+          break
+      }
+
+      // Mark as responded
+      await supabaseAdmin.from('whatsapp_messages')
+        .update({ is_responded: true })
+        .eq('message_id', messageId)
+        .catch(() => {}) // Ignore errors
+
+    } catch (featureErr) {
+      logger.error('Feature handler error', {
+        userId: user.id,
+        intent,
+      }, featureErr as Error)
+
+      // Fallback to auto-responder
+      try {
+        await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+      } catch (fallbackErr) {
+        logger.error('Auto-responder also failed', { userId: user.id }, fallbackErr as Error)
+      }
+    }
+
+    logger.info('✅ Message processed successfully', { userId: user.id, traceId })
     return NextResponse.json({ ok: true })
 
   } catch (err) {
-    console.error('🔥 WEBHOOK_ERROR:', err)
-    return NextResponse.json({ ok: true })
+    logger.error('Webhook error', { traceId }, err as Error)
+    return createErrorResponse(err, traceId)
   }
 }
 
