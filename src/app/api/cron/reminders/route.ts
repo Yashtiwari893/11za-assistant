@@ -8,8 +8,24 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-export async function GET(req: Request) {
-  if (req.headers.get('x-cron-secret') !== process.env.CRON_SECRET) {
+function isAuthorizedCronRequest(req: Request): boolean {
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret) return false
+
+  const xCronSecret = req.headers.get('x-cron-secret')
+  if (xCronSecret && xCronSecret === cronSecret) return true
+
+  const authHeader = req.headers.get('authorization')
+  if (authHeader === `Bearer ${cronSecret}`) return true
+
+  const url = new URL(req.url)
+  if (url.searchParams.get('secret') === cronSecret) return true
+
+  return false
+}
+
+async function processReminders(req: Request) {
+  if (!isAuthorizedCronRequest(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -62,6 +78,14 @@ export async function GET(req: Request) {
     console.error('[cron/reminders] Unexpected error:', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
+}
+
+export async function GET(req: Request) {
+  return processReminders(req)
+}
+
+export async function POST(req: Request) {
+  return processReminders(req)
 }
 
 function getNextRecurrenceDate(recurrence: string, timeStr: string): Date {
