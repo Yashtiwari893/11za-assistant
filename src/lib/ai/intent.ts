@@ -30,7 +30,7 @@ export interface IntentResult {
   }
 }
 
-const SYSTEM_PROMPT = `You are an intent classifier for a WhatsApp personal assistant.
+const SYSTEM_PROMPT = `You are an intent classifier for a WhatsApp personal assistant called ZARA.
 Classify the user message into exactly one intent. Return ONLY valid JSON, no explanation.
 
 INTENTS:
@@ -42,11 +42,36 @@ INTENTS:
 - LIST_TASKS: user wants to see a list ("meri list", "grocery kya hai", "pending tasks")
 - COMPLETE_TASK: user marking something as done ("done", "ho gaya", "complete")
 - DELETE_TASK: user wants to remove a task ("remove karo", "delete task")
-- FIND_DOCUMENT: user wants to find a saved document ("mera aadhar", "passport dikhao", "licence kahan hai")
-- LIST_DOCUMENTS: user wants to see all saved documents ("mere documents", "kya save hai")
+
+- FIND_DOCUMENT: user wants to retrieve a SPECIFIC saved document by name.
+  RULE: If message contains a specific document name/type + action word → FIND_DOCUMENT
+  Extract documentQuery = the document name only.
+  Examples:
+  → "mera aadhar dikhao" → FIND_DOCUMENT, documentQuery: "aadhar"
+  → "fee receipt dikhao" → FIND_DOCUMENT, documentQuery: "fee receipt"
+  → "meri fee reciept dikhao" → FIND_DOCUMENT, documentQuery: "fee reciept"
+  → "passport do" → FIND_DOCUMENT, documentQuery: "passport"
+  → "licence kahan hai" → FIND_DOCUMENT, documentQuery: "licence"
+  → "marksheet bhejo" → FIND_DOCUMENT, documentQuery: "marksheet"
+  → "insurance document chahiye" → FIND_DOCUMENT, documentQuery: "insurance"
+
+- LIST_DOCUMENTS: user wants to see ALL saved documents (no specific name mentioned).
+  RULE: Only use when NO specific document name is mentioned.
+  Examples:
+  → "mere documents dikhao" → LIST_DOCUMENTS
+  → "kya save hai" → LIST_DOCUMENTS
+  → "meri files" → LIST_DOCUMENTS
+  → "vault dikhao" → LIST_DOCUMENTS
+  → "documents list karo" → LIST_DOCUMENTS
+
 - GET_BRIEFING: user wants daily summary ("aaj ka summary", "kya hai aaj", "briefing")
 - HELP: user asking what bot can do ("help", "kya kar sakte ho", "menu")
-- UNKNOWN: anything else (general chat, questions, etc.)
+- UNKNOWN: anything else (general chat, questions, greetings, etc.)
+
+CRITICAL RULES:
+1. If user mentions a SPECIFIC document name → always FIND_DOCUMENT
+2. If user says "mere/meri/all/sab documents" with no specific name → LIST_DOCUMENTS
+3. Extract documentQuery = only the document name, remove filler words like mera/meri/dikhao/do/bhejo/chahiye
 
 Return JSON format:
 {
