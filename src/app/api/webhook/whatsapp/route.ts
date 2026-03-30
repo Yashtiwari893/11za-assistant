@@ -232,10 +232,21 @@ export async function POST(req: NextRequest) {
     })
 
     // ─── CONFIDENCE THRESHOLD CHECK ────────────────────────
-    if (intentResult.confidence < 0.4) {
+    let confidence = intentResult.confidence
+    const lowerMessage = processedMessage.toLowerCase()
+    
+    // Manual keyword boost (especially for documents)
+    if (lowerMessage.includes('dikhao') || lowerMessage.includes('show') || lowerMessage.includes('logo') || lowerMessage.includes('bhejo')) {
+      if (intentResult.intent === 'FIND_DOCUMENT' || intentResult.intent === 'UNKNOWN') {
+        intentResult.intent = 'FIND_DOCUMENT'
+        confidence = 0.99
+      }
+    }
+
+    if (confidence < 0.4) {
       logger.warn('Low confidence intent - using auto-responder', {
         intent: intentResult.intent,
-        confidence: intentResult.confidence,
+        confidence: confidence,
       })
       const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
       if (autoResp.sent && autoResp.response) {

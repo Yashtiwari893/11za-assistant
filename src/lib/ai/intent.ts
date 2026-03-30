@@ -43,24 +43,9 @@ INTENTS:
 - COMPLETE_TASK: user marking something as done ("done", "ho gaya", "complete")
 - DELETE_TASK: user wants to remove a task ("remove karo", "delete task")
 
-- FIND_DOCUMENT: user wants to retrieve a SPECIFIC saved document by name.
-  RULE: If user asks for a document, photo, or file using words like "dikhao", "bhejo", "kahan hai", "send", "show", "get".
-  EVEN if the name is long (e.g., "my company logo from yesterday").
-  Extract documentQuery = the document name/description only.
-  Examples:
-  → "the logo of sensisphere technologies dikhao" → FIND_DOCUMENT, documentQuery: "sensisphere technologies logo"
-  → "mera aadhar dikhao" → FIND_DOCUMENT, documentQuery: "aadhar"
-  → "fee receipt bhejo" → FIND_DOCUMENT, documentQuery: "fee receipt"
-  → "photo lao passport wali" → FIND_DOCUMENT, documentQuery: "passport"
-  → "where is my driving license" → FIND_DOCUMENT, documentQuery: "driving license"
-
-- LIST_DOCUMENTS: user wants to see ALL saved documents (no specific name mentioned).
-  Examples: → "mere documents dikhao", "vault dikhao", "kya save hai"
-
-CRITICAL RULES:
-1. If the message contains "dikhao", "bhejo", "nikalo", "lao", "show", "send", "find" + any specific noun (e.g. logo, receipt, card) → Always FIND_DOCUMENT.
-2. If the user mentions a specific name of a file they just saved → FIND_DOCUMENT.
-3. Extract documentQuery = only the document identification words.
+- FIND_DOCUMENT: user wants a specific file ("sensisphere logo dikhao", "pan card do", "show fees receipt").
+  CRITICAL: Extract documentQuery = ONLY the name. Remove "dikhao", "dikhaiye", "show", "bhejo", "do", "kahan hai".
+  Example: "sensisphere logo dikhao" -> documentQuery: "sensisphere logo"
 
 - GET_BRIEFING: user wants daily summary ("aaj ka summary", "kya hai aaj", "briefing")
 - HELP: user asking what bot can do ("help", "kya kar sakte ho", "menu")
