@@ -89,14 +89,24 @@ export async function classifyIntent(
   message: string,
   language: string = 'en'
 ): Promise<IntentResult> {
+  const now = new Date()
+  // Offset UTC to IST (+5:30)
+  const istOffset = 5.5 * 60 * 60 * 1000
+  const istDate = new Date(now.getTime() + istOffset)
+  
+  const dateStr = istDate.toDateString()
+  const timeStr = istDate.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' })
+
+  const dynamicPrompt = `${SYSTEM_PROMPT}\n\n[CONTEXT]\nToday's Date: ${dateStr}\nCurrent IST Time: ${timeStr}\nIf user says "now" or "abhi", it means exactly this time.`
+
   try {
     const response = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',   // Fast + cheap for classification
-      max_tokens: 200,
+      model: 'llama-3.1-8b-instant',
+      max_tokens: 250,
       response_format: { type: 'json_object' },
-      temperature: 0.1,           // Low temp = consistent classification
+      temperature: 0.1,
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: dynamicPrompt },
         { role: 'user', content: `Language hint: ${language}\nMessage: ${message}` }
       ]
     })
