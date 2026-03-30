@@ -333,15 +333,20 @@ export async function POST(req: NextRequest) {
           break
 
         case 'FIND_DOCUMENT':
-          // FIX: Parameter must be 'query'
-          await handleFindDocument({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            query: extractedData?.documentQuery 
-              || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
-              || processedMessage,
-          })
+          try {
+            // FIX: Parameter must be 'query'
+            await handleFindDocument({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              query: extractedData?.documentQuery 
+                || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
+                || processedMessage,
+            })
+          } catch (docErr) {
+            logger.error('FindDocument handler failed internally', { userId: user.id }, docErr as Error)
+            // WE DON'T call autoResponder here because the document link might already have been sent.
+          }
           break
 
         case 'LIST_DOCUMENTS':
