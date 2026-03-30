@@ -260,20 +260,3 @@ export async function exchangeCodeForTokens(code: string): Promise<{
     return null
   }
 }
-
-// ─── DELETE FILE FROM GOOGLE DRIVE ────────────────────────────
-export async function deleteFromDrive(userId: string, fileId: string): Promise<boolean> {
-  const accessToken = await getValidAccessToken(userId)
-  if (!accessToken) return false
-  
-  try {
-    const res = await fetch(`${GOOGLE_DRIVE_FILES_URL}/${fileId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${accessToken}` }
-    })
-    return res.ok || res.status === 204
-  } catch (err) {
-    console.error('[googleDrive] Delete file error:', err)
-    return false
-  }
-}

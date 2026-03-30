@@ -15,8 +15,6 @@ export type Intent =
   | 'LIST_DOCUMENTS'
   | 'DELETE_DOCUMENT'
   | 'DELETE_ALL_DOCUMENTS'
-  | 'CLEAR_COMPLETED'
-  | 'LIST_ALL_LISTS'
   | 'GET_BRIEFING'
   | 'ONBOARDING'
   | 'HELP'
@@ -64,59 +62,47 @@ SNOOZE_REMINDER:
 
 CANCEL_REMINDER:
 - "doctor wala reminder cancel karo"
-- "sab reminders stop karo"
+- "sab reminders hatao"
 
 ADD_TASK:
-- "add milk, eggs, bread to grocery list"
-- "dhaniya, mirch aur tamatar shopper mein add karo"
-- "Wedding list: Haldi, Mehndi, Card distribution"
-- "office task: send report, call boss"
+- "grocery list mein milk add karo"
+- "wedding list: turmeric powder, masala, oil, paneer"  ← MULTI-ITEM
+- "todo: call bank, pay bill, buy groceries"
+- "office list mein report likhna add karo"
+- "create shopping list with eggs, bread, butter"
+- "Create grocery List for Wedding - Turmeric Powder, Masala, Oil, Paneer, Veggies" ← THIS IS ADD_TASK NOT DOCUMENT
 
 LIST_TASKS:
-- "grocery list mein kya kya hai"
-- "show my shopper list"
-- "tasks dikhao"
+- "meri grocery list dikhao"
+- "office tasks kya hain"
+- "wedding list mein kya kya hai"
+- "pending tasks"
 
 COMPLETE_TASK:
 - "milk done"
-- "eggs ho gaye"
-- "bread check mark karo"
+- "report wala task complete karo"
+- "call bank ho gaya"
 
 DELETE_TASK:
-- "tamatar hatao shopper se"
-- "remove milk"
-- "list se coriander hatao"
-
-CLEAR_COMPLETED:
-- "done tasks hatao"
-- "clear completed tasks"
-- "safai karo list ki"
-
-LIST_ALL_LISTS:
-- "mere saare lists dikhao"
-- "show all my lists"
-- "lists manage"
+- "eggs wala task hatao"
+- "shopping list se bread remove karo"
 
 FIND_DOCUMENT:
-- "sensiphere logo dikhao"
-- "aadhar card ki photo bhejo"
-- "give me my fee receipt"
-- "my driving license please"
+- "mera aadhar dikhao"
+- "sensiphere logo bhejo"
+- "fee receipt nikalo"
+- "passport show karo"
+- "meri marksheet dikhao"
 
 LIST_DOCUMENTS:
-- "saare documents dikhao"
-- "mere vault mein kya kya hai"
-- "list my docs"
+- "mere saare documents dikhao"
+- "kya kya save hai mera"
+- "documents list karo"
 
 DELETE_DOCUMENT:
 - "fee receipt delete karo"
 - "aadhar wali file hatao"
 - "sensiphere logo remove karo"
-
-DELETE_ALL_DOCUMENTS:
-- "saare documents delete kar do"
-- "khali kar do vault"
-- "remove everything"
 
 GET_BRIEFING:
 - "aaj ka briefing do"
@@ -154,10 +140,13 @@ UNKNOWN:
     "isMultiTask": true,
     "taskItems": ["milk", "eggs", "bread"]
   }
-}
-`
+}`
 
-export async function classifyIntent(message: string, lang: string = 'en', context?: any): Promise<IntentResult> {
+export async function classifyIntent(
+  message: string,
+  lang: string = 'en',
+  context?: any
+): Promise<IntentResult> {
   const now = new Date()
   const istOffset = 5.5 * 60 * 60 * 1000
   const istDate = new Date(now.getTime() + istOffset)
@@ -190,8 +179,12 @@ export async function classifyIntent(message: string, lang: string = 'en', conte
       confidence: result.confidence || 0,
       extractedData: result.extractedData || {}
     }
-  } catch (error) {
-    console.error('[intent] classification error:', error)
-    return { intent: 'UNKNOWN', confidence: 0, extractedData: {} }
+  } catch (err) {
+    console.error('[classifyIntent] Error:', err)
+    return {
+      intent: 'UNKNOWN',
+      confidence: 0,
+      extractedData: {}
+    }
   }
 }

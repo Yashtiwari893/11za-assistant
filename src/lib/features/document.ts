@@ -250,7 +250,7 @@ export async function handleFindDocument(params: {
   // Clean conversational words from query
   // Clean conversational words from query
   const cleanQuery = query.toLowerCase()
-    .replace(/\b(mera|meri|mujhe|de|do|dikhao|wala|wali|pdf|photo|chahiye|find|my|show|give|me|document|vault|nikalo|check|lao|bhejo|of|the|a|an)\b/g, '')
+    .replace(/\b(mera|meri|mujhe|de|do|dikhao|wala|wali|card|copy|pdf|photo|chahiye|find|my|show|give|me|document|vault|nikalo|check|lao|bhejo|of|the|a|an)\b/g, '')
     .replace(/\s+/g, ' ')
     .trim()
 
@@ -388,7 +388,7 @@ export async function handleDeleteDocument(params: {
 
   const { data: docs } = await supabase
     .from('documents')
-    .select('id, label, storage_path, drive_file_id')
+    .select('id, label, storage_path')
     .eq('user_id', userId)
     .ilike('label', `%${query}%`)
     .limit(1)
@@ -405,78 +405,16 @@ export async function handleDeleteDocument(params: {
 
   const doc = docs[0]
 
-  // 1. Delete from Google Drive if applicable
-  if (doc.drive_file_id) {
-    try {
-      const { deleteFromDrive } = await import('@/lib/googleDrive')
-      await deleteFromDrive(userId, doc.drive_file_id)
-    } catch (driveErr) {
-      console.error('[document] Drive deletion failed:', driveErr)
-    }
-  }
-
-  // 2. Storage se delete
-  if (doc.storage_path) {
-    await supabase.storage.from('documents').remove([doc.storage_path])
-  }
-
-  // 3. DB se delete with security check
-  await supabase.from('documents')
-    .delete()
-    .eq('id', doc.id)
-    .eq('user_id', userId)
+  // Storage se delete
+  await supabase.storage.from('documents').remove([doc.storage_path])
+  // DB se delete
+  await supabase.from('documents').delete().eq('id', doc.id)
 
   await sendWhatsAppMessage({
     to: phone,
     message: language === 'hi'
       ? `🗑️ *${doc.label}* delete ho gaya!`
       : `🗑️ *${doc.label}* deleted successfully!`
-  })
-}
-
-// ─── DELETE ALL DOCUMENTS ─────────────────────────────────────
-export async function handleDeleteAllDocuments(params: {
-  userId: string
-  phone: string
-  language: Language
-}) {
-  const { userId, phone, language } = params
-
-  // 1. Fetch all docs to get storage paths
-  const { data: docs } = await supabase
-    .from('documents')
-    .select('storage_path, drive_file_id')
-    .eq('user_id', userId)
-
-  if (!docs || docs.length === 0) {
-    await sendWhatsAppMessage({
-      to: phone,
-      message: language === 'hi' ? '📭 Vault pehle se khali hai।' : '📭 Vault is already empty.'
-    })
-    return
-  }
-
-  // 2. Delete from Storage
-  const paths = docs.map(d => d.storage_path).filter(Boolean) as string[]
-  if (paths.length > 0) {
-    await supabase.storage.from('documents').remove(paths)
-  }
-
-  // 3. Delete from Google Drive (Parallel)
-  const driveIds = docs.map(d => d.drive_file_id).filter(Boolean) as string[]
-  if (driveIds.length > 0) {
-    const { deleteFromDrive } = await import('@/lib/googleDrive')
-    await Promise.allSettled(driveIds.map(id => deleteFromDrive(userId, id)))
-  }
-
-  // 4. DB se clear
-  await supabase.from('documents').delete().eq('user_id', userId)
-
-  await sendWhatsAppMessage({
-    to: phone,
-    message: language === 'hi'
-      ? `💥 Sab documents khali ho gaye! (${docs.length} files removed)`
-      : `💥 All documents cleared successfully! (${docs.length} files removed)`
   })
 }
 

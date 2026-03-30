@@ -56,7 +56,7 @@ export async function handleAddTask(params: {
   const items = params.taskContent
     .split(/[\n,،\-\*•]+/) // newline, comma, dash, bullet
     .map(i => i.trim())
-    .filter(i => i.length >= 1) // preserve all actual content
+    .filter(i => i.length > 2) // avoid tiny fragments
 
   if (items.length > 1) {
     // Note: This simplified batch insert doesn't use the RPC. 

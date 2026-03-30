@@ -93,9 +93,8 @@ export async function handleSetReminder(params: {
       .select('id, scheduled_at')
       .eq('user_id', userId)
       .eq('status', 'pending')
-      .ilike('title', title)
+      .ilike('title', `%${title.substring(0, 20)}%`)  // pehle 20 chars match karo
       .gte('scheduled_at', new Date().toISOString())
-      .lte('scheduled_at', new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()) // next 24h
       .limit(1)
 
     if (existing && existing.length > 0) {
