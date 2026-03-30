@@ -11,7 +11,8 @@ import {
   handleDeleteTask
 } from '@/lib/features/task'
 import {
-  handleSaveDocument, handleFindDocument, handleListDocuments
+  handleSaveDocument, handleFindDocument, handleListDocuments,
+  handleDeleteDocument
 } from '@/lib/features/document'
 import { handleGetBriefing } from '@/lib/features/briefing'
 import { helpMessage } from '@/lib/whatsapp/templates'
@@ -354,6 +355,17 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
+          })
+          break
+
+        case 'DELETE_DOCUMENT':
+          await handleDeleteDocument({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            query: extractedData?.documentQuery 
+              || processedMessage.replace(/(delete|hatao|mitao|remove|remove karo|hata|delete)/gi, '').trim()
+              || processedMessage,
           })
           break
 

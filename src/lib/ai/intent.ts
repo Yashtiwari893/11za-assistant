@@ -13,6 +13,8 @@ export type Intent =
   | 'DELETE_TASK'
   | 'FIND_DOCUMENT'
   | 'LIST_DOCUMENTS'
+  | 'DELETE_DOCUMENT'
+  | 'DELETE_ALL_DOCUMENTS'
   | 'GET_BRIEFING'
   | 'ONBOARDING'
   | 'HELP'
@@ -47,14 +49,19 @@ INTENTS:
   CRITICAL: Extract documentQuery = ONLY the name. Remove "dikhao", "dikhaiye", "show", "bhejo", "do", "kahan hai".
   Example: "sensisphere logo dikhao" -> documentQuery: "sensisphere logo"
 
+- DELETE_DOCUMENT: user wants to delete/remove a specific file ("fee receipt delete karo", "remove my aadhar", "file hatao").
+  Example: "delete my PAN card" -> intent: DELETE_DOCUMENT, documentQuery: "PAN card"
+
+- LIST_DOCUMENTS: user wants to see ALL saved documents ("mere documents dikhao", "vault dikhao").
+
 - GET_BRIEFING: user wants daily summary ("aaj ka summary", "kya hai aaj", "briefing")
 - HELP: user asking what bot can do ("help", "kya kar sakte ho", "menu")
 - UNKNOWN: anything else (general chat, questions, greetings, etc.)
 
 CRITICAL RULES:
-1. If user mentions a SPECIFIC document name → always FIND_DOCUMENT
+1. If user mentions a SPECIFIC document name for deletion or retrieval → force relevant intent.
 2. If user says "mere/meri/all/sab documents" with no specific name → LIST_DOCUMENTS
-3. Extract documentQuery = only the document name, remove filler words like mera/meri/dikhao/do/bhejo/chahiye
+3. Extract documentQuery = only the document name/id, remove filler words.
 
 Return JSON format:
 {
