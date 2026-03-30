@@ -101,10 +101,10 @@ export async function classifyIntent(
 
   try {
     const response = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
-      max_tokens: 250,
+      model: 'llama-3.3-70b-versatile', // Hard upgrade for better understanding
+      max_tokens: 350,
       response_format: { type: 'json_object' },
-      temperature: 0.1,
+      temperature: 0, // Deterministic for better classification
       messages: [
         { role: 'system', content: dynamicPrompt },
         { role: 'user', content: `Language hint: ${language}\nMessage: ${message}` }
