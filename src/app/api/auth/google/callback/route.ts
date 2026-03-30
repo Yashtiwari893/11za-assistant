@@ -47,8 +47,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 3. Save tokens to DB
+    console.log('[google/callback] Updating tokens for user:', user.id)
     const expiry = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
-    await supabase
+    const { error: updateErr } = await supabase
       .from('users')
       .update({
         google_access_token: tokens.access_token,
@@ -56,6 +57,13 @@ export async function GET(req: NextRequest) {
         google_token_expiry: expiry,
       })
       .eq('id', user.id)
+
+    if (updateErr) {
+      console.error('[google/callback] DB Update Error:', updateErr)
+      throw new Error(`DB Update failed: ${updateErr.message}`)
+    }
+
+    console.log('[google/callback] Tokens saved successfully')
 
     // 4. Send WhatsApp confirmation
     const lang = (user.language as string) || 'hi'
