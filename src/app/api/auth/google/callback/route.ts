@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(
       `<html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#f0fdf4">
         <div style="max-width:400px;margin:auto">
-          <div style="font-size:64px">✅</div>
+          <div style="font-size:64px">Zara Powered By 11za</div>
           <h2 style="color:#15803d">Google Drive Connected!</h2>
           <p style="color:#374151">Your documents will now be saved directly to your Google Drive in the <strong>ZARA Vault</strong> folder.</p>
           <p style="color:#6b7280;font-size:14px">You can close this tab and go back to WhatsApp.</p>
