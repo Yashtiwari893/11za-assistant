@@ -248,13 +248,14 @@ export async function handleFindDocument(params: {
   const { userId, phone, language, query } = params
 
   // Clean conversational words from query
+  // Clean conversational words from query
   const cleanQuery = query.toLowerCase()
-    .replace(/\b(mera|meri|mujhe|de|do|dikhao|wala|wali|card|copy|pdf|photo|chahiye|find|my|the|show|give|me|document|vault|nikalo|check|lao|bhejo)\b/g, '')
+    .replace(/\b(mera|meri|mujhe|de|do|dikhao|wala|wali|card|copy|pdf|photo|chahiye|find|my|show|give|me|document|vault|nikalo|check|lao|bhejo|of|the|a|an)\b/g, '')
     .replace(/\s+/g, ' ')
     .trim()
 
   const finalQuery = cleanQuery.length > 1 ? cleanQuery : query.trim()
-  const words = finalQuery.split(/\s+/).filter(w => w.length > 1)
+  const words = finalQuery.split(/\s+/).filter(w => w.length > 2) // only words > 2 chars for precision
 
   if (words.length === 0) {
     await sendWhatsAppMessage({

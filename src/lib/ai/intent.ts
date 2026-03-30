@@ -44,25 +44,23 @@ INTENTS:
 - DELETE_TASK: user wants to remove a task ("remove karo", "delete task")
 
 - FIND_DOCUMENT: user wants to retrieve a SPECIFIC saved document by name.
-  RULE: If message contains a specific document name/type + action word → FIND_DOCUMENT
-  Extract documentQuery = the document name only.
+  RULE: If user asks for a document, photo, or file using words like "dikhao", "bhejo", "kahan hai", "send", "show", "get".
+  EVEN if the name is long (e.g., "my company logo from yesterday").
+  Extract documentQuery = the document name/description only.
   Examples:
+  → "the logo of sensisphere technologies dikhao" → FIND_DOCUMENT, documentQuery: "sensisphere technologies logo"
   → "mera aadhar dikhao" → FIND_DOCUMENT, documentQuery: "aadhar"
-  → "fee receipt dikhao" → FIND_DOCUMENT, documentQuery: "fee receipt"
-  → "meri fee reciept dikhao" → FIND_DOCUMENT, documentQuery: "fee reciept"
-  → "passport do" → FIND_DOCUMENT, documentQuery: "passport"
-  → "licence kahan hai" → FIND_DOCUMENT, documentQuery: "licence"
-  → "marksheet bhejo" → FIND_DOCUMENT, documentQuery: "marksheet"
-  → "insurance document chahiye" → FIND_DOCUMENT, documentQuery: "insurance"
+  → "fee receipt bhejo" → FIND_DOCUMENT, documentQuery: "fee receipt"
+  → "photo lao passport wali" → FIND_DOCUMENT, documentQuery: "passport"
+  → "where is my driving license" → FIND_DOCUMENT, documentQuery: "driving license"
 
 - LIST_DOCUMENTS: user wants to see ALL saved documents (no specific name mentioned).
-  RULE: Only use when NO specific document name is mentioned.
-  Examples:
-  → "mere documents dikhao" → LIST_DOCUMENTS
-  → "kya save hai" → LIST_DOCUMENTS
-  → "meri files" → LIST_DOCUMENTS
-  → "vault dikhao" → LIST_DOCUMENTS
-  → "documents list karo" → LIST_DOCUMENTS
+  Examples: → "mere documents dikhao", "vault dikhao", "kya save hai"
+
+CRITICAL RULES:
+1. If the message contains "dikhao", "bhejo", "nikalo", "lao", "show", "send", "find" + any specific noun (e.g. logo, receipt, card) → Always FIND_DOCUMENT.
+2. If the user mentions a specific name of a file they just saved → FIND_DOCUMENT.
+3. Extract documentQuery = only the document identification words.
 
 - GET_BRIEFING: user wants daily summary ("aaj ka summary", "kya hai aaj", "briefing")
 - HELP: user asking what bot can do ("help", "kya kar sakte ho", "menu")
