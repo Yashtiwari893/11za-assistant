@@ -275,6 +275,21 @@ export async function POST(req: NextRequest) {
     const { intent, extractedData } = intentResult
 
     try {
+      // PRE-EMPTIVE DEDUPLICATION: Mark as responded BEFORE calling handlers
+      // This blocks concurrent retries from 11za from executing the same feature.
+      const { data: updated, error: markErr } = await supabaseAdmin
+        .from('whatsapp_messages')
+        .update({ is_responded: true })
+        .eq('message_id', messageId)
+        .eq('is_responded', false) // Only update if it wasn't already responded
+        .select()
+
+      if (updated && updated.length === 0) {
+        // Someone else already picked this up
+        logger.info('ℹ️ Concurrent request blocked', { messageId, traceId })
+        return NextResponse.json({ ok: true })
+      }
+
       switch (intent) {
         case 'SET_REMINDER':
           await handleSetReminder({
@@ -285,29 +300,29 @@ export async function POST(req: NextRequest) {
             dateTimeText: extractedData.dateTimeText,
             reminderTitle: extractedData.reminderTitle,
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'LIST_REMINDERS':
           await handleListReminders({ userId: user.id, phone: cleanFromPhone, language: lang })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'SNOOZE_REMINDER':
           await handleSnoozeReminder({
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            message: processedMessage,
+            customText: processedMessage // Passing original text for better parsing in snooze
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'CANCEL_REMINDER':
           await handleCancelReminder({
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            message: processedMessage,
+            titleHint: extractedData.reminderTitle || processedMessage,
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'ADD_TASK':
           await handleAddTask({
@@ -317,7 +332,7 @@ export async function POST(req: NextRequest) {
             taskContent: extractedData.taskContent || processedMessage,
             listName: extractedData.listName || 'general',
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'LIST_TASKS':
           await handleListTasks({
@@ -326,7 +341,7 @@ export async function POST(req: NextRequest) {
             language: lang,
             listName: extractedData.listName || 'general',
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'COMPLETE_TASK':
           await handleCompleteTask({
@@ -335,7 +350,7 @@ export async function POST(req: NextRequest) {
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'DELETE_TASK':
           await handleDeleteTask({
@@ -344,16 +359,16 @@ export async function POST(req: NextRequest) {
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'FIND_DOCUMENT':
           await handleFindDocument({
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            documentQuery: extractedData.documentQuery || processedMessage,
+            query: extractedData.documentQuery || processedMessage,
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'LIST_DOCUMENTS':
           await handleListDocuments({
@@ -361,7 +376,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'GET_BRIEFING':
           await handleGetBriefing({
@@ -369,18 +384,18 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
           })
-          break
+          return NextResponse.json({ ok: true })
 
         case 'HELP':
           await sendWhatsAppMessage({
             to: cleanFromPhone,
-            message: helpMessage(user.name, lang),
+            message: helpMessage(lang), // Corrected: only 1 arg
           })
-          break
+          return NextResponse.json({ ok: true })
 
         default: // UNKNOWN
           await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
-          break
+          return NextResponse.json({ ok: true })
       }
 
       // Mark as responded
