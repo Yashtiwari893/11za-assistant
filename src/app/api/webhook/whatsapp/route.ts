@@ -231,22 +231,22 @@ export async function POST(req: NextRequest) {
       confidence: intentResult.confidence,
     })
 
-    // ─── CONFIDENCE THRESHOLD CHECK ────────────────────────
-    let confidence = intentResult.confidence
+    // ─── KEYWORD-BASED INTENT OVERRIDE ───────────────────
     const lowerMessage = processedMessage.toLowerCase()
-    
-    // Manual keyword boost (especially for documents)
-    if (lowerMessage.includes('dikhao') || lowerMessage.includes('show') || lowerMessage.includes('logo') || lowerMessage.includes('bhejo')) {
-      if (intentResult.intent === 'FIND_DOCUMENT' || intentResult.intent === 'UNKNOWN') {
-        intentResult.intent = 'FIND_DOCUMENT'
-        confidence = 0.99
-      }
+    const retrievalKeywords = ['dikhao', 'show', 'logo', 'bhejo', 'send', 'do', 'de', 'nikalo', 'find', 'dhundo', 'license', 'card', 'bill']
+    const hasRetrievalIntent = retrievalKeywords.some(k => lowerMessage.includes(k))
+
+    if (hasRetrievalIntent) {
+      // Force FIND_DOCUMENT if any retrieval keyword is present
+      intentResult.intent = 'FIND_DOCUMENT'
+      intentResult.confidence = 0.99
     }
 
-    if (confidence < 0.4) {
+    // ─── CONFIDENCE THRESHOLD CHECK ────────────────────────
+    if (intentResult.confidence < 0.4) {
       logger.warn('Low confidence intent - using auto-responder', {
         intent: intentResult.intent,
-        confidence: confidence,
+        confidence: intentResult.confidence,
       })
       const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
       if (autoResp.sent && autoResp.response) {
@@ -333,11 +333,14 @@ export async function POST(req: NextRequest) {
           break
 
         case 'FIND_DOCUMENT':
+          // FIX: Parameter must be 'query'
           await handleFindDocument({
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            documentQuery: extractedData.documentQuery || processedMessage,
+            query: extractedData?.documentQuery 
+              || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
+              || processedMessage,
           })
           break
 
