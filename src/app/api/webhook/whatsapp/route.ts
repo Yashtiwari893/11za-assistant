@@ -83,61 +83,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     }
 
-    // ─── MESSAGE DEDUPLICATION & LOGGING ───────────────────
-    const { data: existingMsg, error: dupError } = await supabaseAdmin
-      .from('whatsapp_messages')
-      .select('id')
-      .eq('message_id', messageId)
-      .limit(1)
-      .maybeSingle()
-
-    if (dupError) {
-      logger.warn('Pre-check duplicate query failed', { messageId, error: dupError.message })
-    }
-
-    if (existingMsg) {
-      logger.info('ℹ️ Duplicate message ignored', { messageId, traceId })
-      return NextResponse.json({ ok: true })
-    }
-
-    // ─── LOG MESSAGE TO DATABASE ──────────────────────────
+    // ─── ATOMIC DEDUPLICATION ─────────────────────────────
+    // We try to insert first. If it fails with 23505 (Unique violation), it's a duplicate.
+    // This is faster and safer than (SELECT then INSERT).
     try {
-      let duplicateDuringInsert = false
+      const { error: logErr } = await supabaseAdmin.from('whatsapp_messages').insert([{
+        message_id: messageId,
+        channel: 'whatsapp',
+        from_number: cleanFromPhone,
+        to_number: cleanToPhone,
+        received_at: new Date().toISOString(),
+        content_type: mediaType,
+        content_text: message ? validatePlainText(message, 10000) : null,
+        sender_name: name ? validatePlainText(name, 100) : null,
+        event_type: event,
+        is_in_24_window: true,
+        is_responded: false,
+        raw_payload: body,
+        trace_id: traceId,
+      }])
 
-      await retryWithExponentialBackoff(async () => {
-        const { error: logErr } = await supabaseAdmin.from('whatsapp_messages').insert([{
-          message_id: messageId,
-          channel: 'whatsapp',
-          from_number: cleanFromPhone,
-          to_number: cleanToPhone,
-          received_at: new Date().toISOString(),
-          content_type: mediaType,
-          content_text: message ? validatePlainText(message, 10000) : null,
-          sender_name: name ? validatePlainText(name, 100) : null,
-          event_type: event,
-          is_in_24_window: true,
-          is_responded: false,
-          raw_payload: body,
-          trace_id: traceId,
-        }])
-
-        if (logErr && (logErr as any).code === '23505') {
-          duplicateDuringInsert = true
-          return
+      if (logErr) {
+        if ((logErr as any).code === '23505') {
+          logger.info('ℹ️ Duplicate message ignored (Insert conflict)', { messageId })
+          return NextResponse.json({ ok: true }) // Silent ignore
         }
-
-        if (logErr) {
-          throw logErr
-        }
-      }, 2)
-
-      if (duplicateDuringInsert) {
-        logger.info('ℹ️ Duplicate message ignored after insert race', { messageId, traceId })
-        return NextResponse.json({ ok: true })
+        throw logErr
       }
     } catch (logErr) {
+      // If DB is failing, we might have issues, but for now we skip to avoid infinite loops
       logger.error('Failed to log message', { messageId }, logErr as Error)
-      // Continue anyway - don't block the flow
     }
 
     // ─── ONLY PROCESS INCOMING MESSAGES ────────────────────
