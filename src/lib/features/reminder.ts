@@ -124,15 +124,25 @@ export async function handleSetReminder(params: {
     return
   }
 
+  // ── Timezone Correction (IST to UTC) ─────────────────────
+  // User says "12:00 PM" (IST). AI parses as "12:00 PM" (UTC).
+  // We subtract 5.5 hours to make it "06:30 AM" (UTC), which is 12:00 PM IST.
+  let finalScheduledAt: string | null = null
+  if (parsed.date) {
+    const istOffset = 5.5 * 60 * 60 * 1000
+    const utcDate = new Date(parsed.date.getTime() - istOffset)
+    finalScheduledAt = utcDate.toISOString()
+  }
+
   // ── Save to Supabase ───────────────────────────────────────
   const { error } = await supabase
     .from('reminders')
     .insert({
       user_id: userId,
       title,
-      scheduled_at: parsed.date?.toISOString() ?? null,
+      scheduled_at: finalScheduledAt,
       recurrence: parsed.recurrence ?? null,
-      recurrence_time: parsed.recurrenceTime ?? null,  // GUARDRAIL 5: recurring fix
+      recurrence_time: parsed.recurrenceTime ?? null,
       status: 'pending'
     })
 
