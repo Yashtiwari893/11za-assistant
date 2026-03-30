@@ -77,7 +77,6 @@ export async function handleSaveDocument(params: {
   const label = cleanLabel(caption?.trim()) || guessLabel(normalizedType)
   const ext = getExtension(normalizedType)
   const docType = normalizedType.includes('pdf') ? 'pdf' : 'image'
-  const storagePath = `${userId}/${Date.now()}_${label.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '')}.${ext}`
 
   // ── GUARDRAIL 5: Duplicate label check ────────────────────
   if (caption?.trim()) {
@@ -102,15 +101,57 @@ export async function handleSaveDocument(params: {
     }
   }
 
-  // ── Upload to Supabase Storage ─────────────────────────────
-  const { error: uploadErr } = await supabase.storage
-    .from('documents')
-    .upload(storagePath, mediaBuffer, { contentType: normalizedType, upsert: false })
+  // ── CHECK: Is Google Drive connected? ─────────────────────
+  const { isDriveConnected, uploadToDrive } = await import('@/lib/googleDrive')
+  const driveConnected = await isDriveConnected(userId)
 
-  if (uploadErr) {
-    console.error('[document] Upload failed:', uploadErr)
-    await sendWhatsAppMessage({ to: phone, message: errorMessage(language) })
+  let driveFileId: string | null = null
+  let storagePath: string | null = null
+
+  if (driveConnected) {
+    // ── Save to Google Drive ───────────────────────────────
+    const fileName = `${label.replace(/\s+/g, '_')}_${Date.now()}.${ext}`
+    const driveResult = await uploadToDrive({
+      userId,
+      fileBuffer: mediaBuffer,
+      fileName,
+      mimeType: normalizedType
+    })
+
+    if (!driveResult) {
+      console.error('[document] Drive upload failed, falling back to Supabase')
+      // Fall through to Supabase
+    } else {
+      driveFileId = driveResult.fileId
+      console.log('[document] Saved to Drive:', driveFileId)
+    }
+  }
+
+  // ── If Drive not connected OR Drive upload failed → prompt / Supabase ──
+  if (!driveConnected && !driveFileId) {
+    // First time — ask user to connect Drive
+    const connectUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/google?phone=${phone}`
+    await sendWhatsAppMessage({
+      to: phone,
+      message: language === 'hi'
+        ? `📁 *Document save karne se pehle, apni Google Drive connect karo!*\n\nYe ek baar ka kaam hai — phir kabhi nhi bolungi 😊\n\n👉 ${connectUrl}\n\n_Link 10 min ke liye valid hai।_`
+        : `📁 *Connect your Google Drive to save documents!*\n\nThis is a one-time setup — I won't ask again 😊\n\n👉 ${connectUrl}\n\n_Link valid for 10 minutes._`
+    })
     return
+  }
+
+  // ── If Drive failed mid-way, fallback to Supabase ─────────
+  if (driveConnected && !driveFileId) {
+    storagePath = `${userId}/${Date.now()}_${label.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '')}.${ext}`
+    const { error: uploadErr } = await supabase.storage
+      .from('documents')
+      .upload(storagePath, mediaBuffer, { contentType: normalizedType, upsert: false })
+
+    if (uploadErr) {
+      console.error('[document] Supabase fallback upload failed:', uploadErr)
+      await sendWhatsAppMessage({ to: phone, message: errorMessage(language) })
+      return
+    }
   }
 
   // ── Save metadata to DB ────────────────────────────────────
@@ -118,6 +159,8 @@ export async function handleSaveDocument(params: {
     user_id: userId,
     label,
     storage_path: storagePath,
+    drive_file_id: driveFileId,
+    storage_type: driveFileId ? 'google_drive' : 'supabase',
     doc_type: docType,
     mime_type: normalizedType,
     file_size: mediaBuffer.length,
@@ -125,17 +168,19 @@ export async function handleSaveDocument(params: {
 
   if (dbErr) {
     console.error('[document] DB insert failed:', dbErr)
-    // Storage se bhi hata do agar DB fail ho
-    await supabase.storage.from('documents').remove([storagePath])
+    // Cleanup drive file if DB failed
+    if (driveFileId) console.warn('[document] Drive file saved but DB failed:', driveFileId)
+    if (storagePath) await supabase.storage.from('documents').remove([storagePath])
     await sendWhatsAppMessage({ to: phone, message: errorMessage(language) })
     return
   }
 
-  // ── No caption — ask for label, save session state ─────────
+  // ── No caption — ask for label ──────────────────────────
   if (!caption?.trim()) {
     await saveSessionState(userId, {
       pending_action: 'awaiting_label',
       document_path: storagePath,
+      drive_file_id: driveFileId,
       doc_type: docType
     })
 
@@ -255,13 +300,25 @@ export async function handleFindDocument(params: {
 
   const doc = results[0]
 
-  // ── Generate signed URL (15 min valid) ────────────────────
-  const { data: signedData } = await supabase.storage
-    .from('documents')
-    .createSignedUrl(doc.storage_path, 900)
+  // ── Get file URL: Drive or Supabase ───────────────────────
+  let fileUrl: string | null = null
 
-  if (!signedData?.signedUrl) {
-    console.error('[document] Signed URL generation failed')
+  if (doc.drive_file_id) {
+    // Fetch from Google Drive
+    const { getDriveFileLink } = await import('@/lib/googleDrive')
+    fileUrl = await getDriveFileLink(userId, doc.drive_file_id)
+  }
+
+  if (!fileUrl && doc.storage_path) {
+    // Fallback: Supabase signed URL (15 min)
+    const { data: signedData } = await supabase.storage
+      .from('documents')
+      .createSignedUrl(doc.storage_path, 900)
+    fileUrl = signedData?.signedUrl ?? null
+  }
+
+  if (!fileUrl) {
+    console.error('[document] Could not generate file URL')
     await sendWhatsAppMessage({ to: phone, message: errorMessage(language) })
     return
   }
@@ -271,7 +328,7 @@ export async function handleFindDocument(params: {
     message: language === 'hi'
       ? `📁 *${doc.label}* mila!\n\n_(Link 15 min ke liye valid hai)_`
       : `📁 Found *${doc.label}*!\n\n_(Link valid for 15 min)_`,
-    mediaUrl: signedData.signedUrl,
+    mediaUrl: fileUrl,
     mediaType: doc.doc_type === 'pdf' ? 'document' : 'image'
   })
 }
