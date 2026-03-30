@@ -25,6 +25,7 @@ export type AutoResponseResult = {
     sent?: boolean
     error?: string
     noDocuments?: boolean
+    processed_by?: string
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────
@@ -134,28 +135,83 @@ export async function generateAutoResponse(
             }))
             .slice(-MAX_HISTORY) // Last N only
 
-        // ── 3. SYSTEM PROMPT ──────────────────────────────────────
-        const baseRules = `You are 11za, a smart and friendly personal assistant on WhatsApp.
+        // ── 3. INTENT CLASSIFICATION ─────────────────────────────
+        const { classifyIntent } = await import('@/lib/ai/intent')
+        const { intent, extractedData, confidence } = await classifyIntent(safeUserText, 'hi') // default hi/en
 
-STRICT RULES:
+        console.log(`[autoResponder] Intent: ${intent} | Conf: ${confidence}`)
+
+        // ── 4. HANDLE FEATURES (If high confidence) ──────────────
+        if (confidence > 0.7) {
+            // Get user ID (required for features)
+            const { data: userData } = await supabaseAdmin
+                .from('users')
+                .select('id, language')
+                .eq('phone', cleanFrom)
+                .single()
+
+            const userId = userData?.id
+            const lang = (userData?.language as any) || 'hi'
+
+            if (userId) {
+                // Documents
+                if (intent === 'FIND_DOCUMENT' && extractedData.documentQuery) {
+                    const { handleFindDocument } = await import('@/lib/features/document')
+                    await handleFindDocument({
+                        userId,
+                        phone: cleanFrom,
+                        language: lang,
+                        query: extractedData.documentQuery
+                    })
+                    return { success: true, processed_by: 'FIND_DOCUMENT' }
+                }
+
+                if (intent === 'LIST_DOCUMENTS') {
+                    const { handleListDocuments } = await import('@/lib/features/document')
+                    await handleListDocuments({ userId, phone: cleanFrom, language: lang })
+                    return { success: true, processed_by: 'LIST_DOCUMENTS' }
+                }
+
+                // Reminders
+                if (intent === 'SET_REMINDER' && extractedData.dateTimeText) {
+                    const { handleSetReminder } = await import('@/lib/features/reminder')
+                    await handleSetReminder({
+                        userId,
+                        phone: cleanFrom,
+                        language: lang,
+                        message: safeUserText,
+                        dateTimeText: extractedData.dateTimeText,
+                        reminderTitle: extractedData.taskContent // Use taskContent as title if available
+                    })
+                    return { success: true, processed_by: 'SET_REMINDER' }
+                }
+
+                // Tasks
+                if (intent === 'ADD_TASK' && extractedData.taskContent) {
+                    const { handleAddTask } = await import('@/lib/features/task')
+                    await handleAddTask({
+                        userId,
+                        phone: cleanFrom,
+                        language: lang,
+                        taskContent: extractedData.taskContent,
+                        listName: extractedData.listName || 'general'
+                    })
+                    return { success: true, processed_by: 'ADD_TASK' }
+                }
+            }
+        }
+
+        // ── 5. LLM FALLBACK (For general chat) ────────────────────
+        const baseRules = `You are ZARA, a smart and friendly personal assistant on WhatsApp.
 - Reply like a helpful human friend — warm, natural, conversational
 - Keep replies SHORT — 1 to 3 lines max (WhatsApp style)
-- Match the user's language automatically:
-  * Clear English → English
-  * Hindi script → Hindi
-  * Gujarati script → Gujarati
-  * Mixed/casual/Roman Hindi → Hinglish
-- Answer general knowledge questions naturally
-- NEVER mention documents, training data, or knowledge base
-- If you don't know something: "Abhi exact info nahi hai 😊 Kuch aur pooch sakte ho!"
-- Light emojis OK (1-2 max) — no overuse
-- NEVER give long paragraphs or bullet-point lists`.trim()
+- Match the user's language automatically (Hinglish/English/Hindi)
+- If you don't know something: "Abhi exact info nahi hai 😊 Kuch aur pooch sakte ho!"`.trim()
 
         const systemPrompt = systemPromptBase
             ? `${systemPromptBase}\n\n${baseRules}`
             : baseRules
 
-        // ── 4. BUILD MESSAGES ─────────────────────────────────────
         const messages = [
             { role: 'system' as const, content: systemPrompt },
             ...history,
