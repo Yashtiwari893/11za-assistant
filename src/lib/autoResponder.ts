@@ -3,7 +3,7 @@
 // Ye RAG/General chat fallback hai — SAM features ke baad call hota hai
 
 import { createClient } from '@supabase/supabase-js'
-import { sendWhatsAppMessage } from './whatsappSender'
+import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import Groq from 'groq-sdk'
 
 const supabaseAdmin = createClient(
@@ -173,12 +173,10 @@ export async function generateAutoResponse(
         const cleanReply = reply.replace(forbidden, 'available information')
 
         // ── 6. SEND WHATSAPP ──────────────────────────────────────
-        const sendResult = await sendWhatsAppMessage(
-            cleanFrom,
-            cleanReply,
-            auth_token,
-            origin
-        )
+        const sendResult = await sendWhatsAppMessage({
+            to: cleanFrom,
+            message: cleanReply
+        })
 
         if (!sendResult.success) {
             console.error('[autoResponder] WhatsApp send failed:', sendResult.error)

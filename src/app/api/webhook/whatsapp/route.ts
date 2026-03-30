@@ -8,11 +8,11 @@ import {
 } from '@/lib/features/reminder'
 import {
   handleAddTask, handleListTasks, handleCompleteTask,
-  handleDeleteTask
+  handleDeleteTask, handleClearCompleted, handleListAllLists
 } from '@/lib/features/task'
 import {
   handleSaveDocument, handleFindDocument, handleListDocuments,
-  handleDeleteDocument
+  handleDeleteDocument, handleDeleteAllDocuments
 } from '@/lib/features/document'
 import { handleGetBriefing } from '@/lib/features/briefing'
 import { helpMessage } from '@/lib/whatsapp/templates'
@@ -24,6 +24,7 @@ import { logger, setTraceId } from '@/lib/infrastructure/logger'
 import { createErrorResponse } from '@/lib/infrastructure/errorHandler'
 import { validatePhone, validatePlainText } from '@/lib/infrastructure/inputValidator'
 import { retryWithExponentialBackoff } from '@/lib/infrastructure/errorHandler'
+import { getContext, updateContext, addToHistory } from '@/lib/infrastructure/sessionContext'
 import type { Language } from '@/lib/whatsapp/templates'
 
 const supabaseAdmin = getSupabaseClient()
@@ -55,6 +56,25 @@ function parseWebhookPayload(body: any) {
   }
 }
 
+// ─── RATE LIMITER (In-Memory) ─────────────────────────
+const RATE_LIMIT_MS = 60000 // 60 seconds
+const MAX_REQUESTS = 10     // 10 messages
+const rateLimitMap = new Map<string, { count: number, lastReset: number }>()
+
+function isRateLimited(phone: string): boolean {
+  const now = Date.now()
+  const bucket = rateLimitMap.get(phone)
+
+  if (!bucket || (now - bucket.lastReset) > RATE_LIMIT_MS) {
+    rateLimitMap.set(phone, { count: 1, lastReset: now })
+    return false
+  }
+
+  bucket.count++
+  if (bucket.count > MAX_REQUESTS) return true
+  return false
+}
+
 export async function POST(req: NextRequest) {
   // ─── TRACE ID & LOGGING ────────────────────────────────
   const traceId = uuid()
@@ -62,10 +82,18 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
+    const { phone, messageId } = parseWebhookPayload(body)
+
+    // ─── RATE LIMIT CHECK ──────────────────────────────────
+    if (phone && isRateLimited(phone)) {
+      logger.warn('Rate limit hit', { phone, traceId })
+      return NextResponse.json({ error: 'Too many messages. Please wait a minute.' }, { status: 429 })
+    }
+
     logger.info('📩 Webhook received', { traceId, eventType: body.event })
 
     // ─── PARSE & VALIDATE WEBHOOK PAYLOAD ──────────────────
-    const { phone, to, message, buttonId, mediaUrl, mediaType, mimeType, subType, messageId, name, event } = parseWebhookPayload(body)
+    const { to, message, buttonId, mediaUrl, mediaType, mimeType, subType, name, event } = parseWebhookPayload(body)
 
     // ─── VALIDATE REQUIRED FIELDS ──────────────────────────
     if (!phone || !messageId) {
@@ -195,36 +223,39 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── LOAD SESSION CONTEXT ─────────────────────────────
-    const { data: session } = await supabaseAdmin
-      .from('sessions')
-      .select('context')
-      .eq('user_id', user.id)
-      .single()
-
-    const ctx = session?.context as any
+    const ctx = await getContext(user.id)
 
     // ─── HANDLE PENDING ACTIONS (e.g., awaiting document label) ─
     if (ctx?.pending_action === 'awaiting_label') {
-      const label = processedMessage.trim().substring(0, 100)
-      await supabaseAdmin.from('documents')
-        .update({ label: validatePlainText(label, 100) })
-        .eq('storage_path', ctx.document_path)
-        .eq('user_id', user.id)
-      await supabaseAdmin.from('sessions')
-        .update({ context: {} })
-        .eq('user_id', user.id)
-      await sendWhatsAppMessage({
-        to: cleanFromPhone,
-        message: lang === 'hi'
-          ? `📁 *${label}* के नाम से save हो गया!\n\n_"${label} दिखाओ" बोलकर फिर से पा सकते हो।_`
-          : `📁 Saved as *${label}*!\n\nSay "show ${label}" anytime to get it back.`
-      })
-      return NextResponse.json({ ok: true })
+      const commandKeywords = ['add', 'list', 'remind', 'task', 'dikhao', 'show', 'delete', 'help', 'yaad', 'briefing', 'morning']
+      const looksLikeCommand = commandKeywords.some(k => processedMessage.toLowerCase().includes(k))
+      
+      if (looksLikeCommand) {
+        // Clear pending action and process normally
+        await updateContext(user.id, { pending_action: undefined, document_path: undefined })
+        // Fall through to normal intent classification
+      } else {
+        const label = processedMessage.trim().substring(0, 100)
+        await supabaseAdmin.from('documents')
+          .update({ label: validatePlainText(label, 100) })
+          .eq('storage_path', ctx.document_path)
+          .eq('user_id', user.id)
+        
+        await updateContext(user.id, { pending_action: undefined, document_path: undefined })
+        
+        await sendWhatsAppMessage({
+          to: cleanFromPhone,
+          message: lang === 'hi'
+            ? `📁 *${label}* ke naam se save ho gaya!\n\n_"${label} dikhao" bolkar phir se pa sakte ho।_`
+            : `📁 Saved as *${label}*!\n\nSay "show ${label}" anytime to get it back.`
+        })
+        return NextResponse.json({ ok: true })
+      }
     }
 
     // ─── INTENT CLASSIFICATION ───────────────────────────
     logger.debug('Classifying intent', { userId: user.id })
-    const intentResult = await classifyIntent(processedMessage, lang)
+    const intentResult = await classifyIntent(processedMessage, lang, ctx)
 
     logger.info('Intent classified', {
       userId: user.id,
@@ -232,15 +263,26 @@ export async function POST(req: NextRequest) {
       confidence: intentResult.confidence,
     })
 
-    // ─── KEYWORD-BASED INTENT OVERRIDE ───────────────────
+    // ─── KEYWORD-BASED INTENT OVERRIDE (Safety Net) ───────
     const lowerMessage = processedMessage.toLowerCase()
-    const retrievalKeywords = ['dikhao', 'show', 'logo', 'bhejo', 'send', 'do', 'de', 'nikalo', 'find', 'dhundo', 'license', 'card', 'bill']
-    const hasRetrievalIntent = retrievalKeywords.some(k => lowerMessage.includes(k))
+    const taskKeywords = ['list', 'task', 'grocery', 'shopping', 'todo', 'kaam', 'shadi', 'wedding']
+    const isLikelyTask = taskKeywords.some(k => lowerMessage.includes(k))
 
-    if (hasRetrievalIntent) {
-      // Force FIND_DOCUMENT if any retrieval keyword is present
-      intentResult.intent = 'FIND_DOCUMENT'
-      intentResult.confidence = 0.99
+    // Recovery/Find override (only if not likely a task)
+    if (!isLikelyTask && (lowerMessage.includes('dikhao') || lowerMessage.includes('show') || lowerMessage.includes('nikalo') || lowerMessage.includes('bhejo'))) {
+      if (intentResult.intent === 'UNKNOWN' || intentResult.confidence < 0.7) {
+        intentResult.intent = 'FIND_DOCUMENT'
+        intentResult.confidence = 0.95
+      }
+    }
+
+    // Deletion override (only if not likely a task)
+    const isLikelyTaskDelete = isLikelyTask && (lowerMessage.includes('remove') || lowerMessage.includes('hatao'))
+    if (!isLikelyTaskDelete && (lowerMessage.includes('delete') || lowerMessage.includes('mitao'))) {
+      if (intentResult.intent === 'UNKNOWN' || intentResult.confidence < 0.7) {
+        intentResult.intent = 'DELETE_DOCUMENT'
+        intentResult.confidence = 0.95
+      }
     }
 
     // ─── CONFIDENCE THRESHOLD CHECK ────────────────────────
@@ -250,11 +292,11 @@ export async function POST(req: NextRequest) {
         confidence: intentResult.confidence,
       })
       const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
-      if (autoResp.sent && autoResp.response) {
-        await supabaseAdmin.from('whatsapp_messages')
-          .update({ is_responded: true })
-          .eq('message_id', messageId)
-      }
+      
+      // Update history for unknown messages too
+      await addToHistory(user.id, 'user', processedMessage)
+      if (autoResp.response) await addToHistory(user.id, 'assistant', autoResp.response)
+
       return NextResponse.json({ ok: true })
     }
 
@@ -283,7 +325,7 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            message: processedMessage,
+            customText: processedMessage,
           })
           break
 
@@ -292,7 +334,7 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            message: processedMessage,
+            titleHint: extractedData.reminderTitle || processedMessage,
           })
           break
 
@@ -306,14 +348,21 @@ export async function POST(req: NextRequest) {
           })
           break
 
-        case 'LIST_TASKS':
+        case 'LIST_TASKS': {
+          const listNameForView = extractedData.listName
+          // BUG #10 Fix: Inferred list from context
+          const inferredList = (listNameForView && listNameForView !== 'general') 
+            ? listNameForView 
+            : (ctx.last_list_name || 'general')
+
           await handleListTasks({
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            listName: extractedData.listName || 'general',
+            listName: inferredList,
           })
           break
+        }
 
         case 'COMPLETE_TASK':
           await handleCompleteTask({
@@ -335,7 +384,6 @@ export async function POST(req: NextRequest) {
 
         case 'FIND_DOCUMENT':
           try {
-            // FIX: Parameter must be 'query'
             await handleFindDocument({
               userId: user.id,
               phone: cleanFromPhone,
@@ -345,8 +393,8 @@ export async function POST(req: NextRequest) {
                 || processedMessage,
             })
           } catch (docErr) {
+            // BUG #1 Fix: Isolated error handling to prevent double message
             logger.error('FindDocument handler failed internally', { userId: user.id }, docErr as Error)
-            // WE DON'T call autoResponder here because the document link might already have been sent.
           }
           break
 
@@ -359,13 +407,48 @@ export async function POST(req: NextRequest) {
           break
 
         case 'DELETE_DOCUMENT':
-          await handleDeleteDocument({
+          try {
+            await handleDeleteDocument({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              query: extractedData?.documentQuery 
+                || processedMessage.replace(/(delete|hatao|mitao|remove|remove karo|hata|delete)/gi, '').trim()
+                || processedMessage,
+            })
+          } catch (delErr) {
+            logger.error('DeleteDocument handler failed internally', { userId: user.id }, delErr as Error)
+          }
+          break
+
+        case 'DELETE_ALL_DOCUMENTS':
+          await handleDeleteAllDocuments({
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            query: extractedData?.documentQuery 
-              || processedMessage.replace(/(delete|hatao|mitao|remove|remove karo|hata|delete)/gi, '').trim()
-              || processedMessage,
+          })
+          break
+
+        case 'CLEAR_COMPLETED': {
+          const listNameForClear = extractedData.listName
+          const inferredListClear = (listNameForClear && listNameForClear !== 'general') 
+            ? listNameForClear 
+            : (ctx.last_list_name || 'general')
+
+          await handleClearCompleted({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            listName: inferredListClear,
+          })
+          break
+        }
+
+        case 'LIST_ALL_LISTS':
+          await handleListAllLists({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
           })
           break
 
@@ -388,6 +471,16 @@ export async function POST(req: NextRequest) {
           await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
           break
       }
+
+      // After successful handling — context update karo
+      await updateContext(user.id, {
+        last_intent: intent,
+        last_list_name: extractedData?.listName || ctx.last_list_name,
+        last_document_query: extractedData?.documentQuery || ctx.last_document_query,
+      })
+
+      // History mein add karo
+      await addToHistory(user.id, 'user', processedMessage)
 
       // Mark as responded
       await supabaseAdmin.from('whatsapp_messages')

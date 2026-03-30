@@ -50,7 +50,43 @@ export async function handleAddTask(params: {
   listName: string
   workspaceId?: string
 }) {
-  const { userId, phone, language, workspaceId } = params
+  const { userId, phone, language, listName, workspaceId } = params
+
+  // ── Multi-item Parsing ──────────────────────────────────────
+  const items = params.taskContent
+    .split(/[\n,،\-\*•]+/) // newline, comma, dash, bullet
+    .map(i => i.trim())
+    .filter(i => i.length >= 1) // preserve all actual content
+
+  if (items.length > 1) {
+    // Note: This simplified batch insert doesn't use the RPC. 
+    // In a real app, we'd loop or use a batch RPC.
+    const normalized = normalizeListName(listName)
+    // First get/create list ID
+    const { data: listId } = await supabase.rpc('get_or_create_list', {
+      p_user_id:      userId,
+      p_name:         normalized,
+      p_workspace_id: workspaceId ?? null
+    })
+
+    if (listId) {
+      await supabase.from('tasks').insert(
+        items.map(item => ({
+          list_id: listId,
+          content: item,
+          status: 'pending'
+        }))
+      )
+    }
+    
+    await sendWhatsAppMessage({
+      to: phone,
+      message: language === 'hi'
+        ? `✅ *${normalized}* list mein ${items.length} items add ho gaye!\n${items.map(i => `• ${i}`).join('\n')}`
+        : `✅ Added ${items.length} items to *${normalized}*!\n${items.map(i => `• ${i}`).join('\n')}`
+    })
+    return
+  }
 
   // ── GUARDRAIL 1: Empty content check ──────────────────────
   const taskContent = cleanTaskContent(params.taskContent)
@@ -65,7 +101,7 @@ export async function handleAddTask(params: {
   }
 
   // ── GUARDRAIL 2: List name normalize ──────────────────────
-  const listName = normalizeListName(params.listName || 'general')
+  const finalListName = normalizeListName(params.listName || 'general')
 
   // ── GUARDRAIL 3: Duplicate task check ─────────────────────
   // Pehle list dhundo
@@ -73,7 +109,7 @@ export async function handleAddTask(params: {
     .from('lists')
     .select('id')
     .eq('user_id', userId)
-    .ilike('name', listName)
+    .ilike('name', finalListName)
     .single()
 
   if (existingList) {
@@ -89,8 +125,8 @@ export async function handleAddTask(params: {
       await sendWhatsAppMessage({
         to: phone,
         message: language === 'hi'
-          ? `⚠️ *${taskContent}* already *${listName}* list mein hai!`
-          : `⚠️ *${taskContent}* is already in your *${listName}* list!`
+          ? `⚠️ *${taskContent}* already *${finalListName}* list mein hai!`
+          : `⚠️ *${taskContent}* is already in your *${finalListName}* list!`
       })
       return
     }
@@ -99,7 +135,7 @@ export async function handleAddTask(params: {
   // ── Get or create list ────────────────────────────────────
   const { data: listId, error: listErr } = await supabase.rpc('get_or_create_list', {
     p_user_id:      userId,
-    p_name:         listName,
+    p_name:         finalListName,
     p_workspace_id: workspaceId ?? null
   })
 
