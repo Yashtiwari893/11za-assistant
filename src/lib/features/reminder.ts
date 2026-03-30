@@ -71,14 +71,13 @@ export async function handleSetReminder(params: {
     return
   }
 
-  // ── GUARDRAIL 2: Minimum 2 minutes future ─────────────────
-  const minTime = new Date(Date.now() + 2 * 60 * 1000)
-  if (parsed.date && parsed.date < minTime) {
+  // ── GUARDRAIL 2 (Bypass for testing): Allow any future time ─
+  if (parsed.date && parsed.date < new Date(Date.now() - 5000)) { // 5s grace
     await sendWhatsAppMessage({
       to: phone,
       message: language === 'hi'
-        ? '⚠️ Kam se kam 2 minute aage ka time do!'
-        : '⚠️ Please set a reminder at least 2 minutes in the future!'
+        ? '⚠️ Ye time toh nikal gaya!'
+        : '⚠️ That time has already passed!'
     })
     return
   }

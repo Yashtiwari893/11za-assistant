@@ -181,7 +181,7 @@ export async function generateAutoResponse(
                         language: lang,
                         message: safeUserText,
                         dateTimeText: extractedData.dateTimeText,
-                        reminderTitle: extractedData.taskContent // Use taskContent as title if available
+                        reminderTitle: extractedData.taskContent || undefined // feature handler will clean original message if this is missing
                     })
                     return { success: true, processed_by: 'SET_REMINDER' }
                 }
