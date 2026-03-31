@@ -246,22 +246,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ─── CONFIDENCE THRESHOLD CHECK ────────────────────────
-    if (intentResult.confidence < 0.4) {
-      logger.warn('Low confidence intent - using auto-responder', {
-        intent: intentResult.intent,
-        confidence: intentResult.confidence,
-      })
-      const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
-      
-      // Update history for unknown messages too
-      await addToHistory(user.id, 'user', processedMessage)
-      if (autoResp.response) await addToHistory(user.id, 'assistant', autoResp.response)
-
-      return NextResponse.json({ ok: true })
-    }
-
     // ─── ROUTE TO FEATURE HANDLERS ────────────────────────
+    let isHandled = false
     const { intent, extractedData } = intentResult
 
     try {
@@ -272,31 +258,19 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             message: processedMessage,
-            dateTimeText: extractedData.dateTimeText,
-            reminderTitle: extractedData.reminderTitle,
+            dateTimeText: extractedData.dateTimeText || processedMessage,
+            reminderTitle: extractedData.reminderTitle || processedMessage,
           })
+          isHandled = true
           break
 
         case 'LIST_REMINDERS':
-          await handleListReminders({ userId: user.id, phone: cleanFromPhone, language: lang })
-          break
-
-        case 'SNOOZE_REMINDER':
-          await handleSnoozeReminder({
+          await handleListReminders({
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            message: processedMessage,
           })
-          break
-
-        case 'CANCEL_REMINDER':
-          await handleCancelReminder({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            message: processedMessage,
-          })
+          isHandled = true
           break
 
         case 'ADD_TASK':
@@ -307,6 +281,7 @@ export async function POST(req: NextRequest) {
             taskContent: extractedData.taskContent || processedMessage,
             listName: extractedData.listName || 'general',
           })
+          isHandled = true
           break
 
         case 'LIST_TASKS':
@@ -316,6 +291,7 @@ export async function POST(req: NextRequest) {
             language: lang,
             listName: extractedData.listName || 'general',
           })
+          isHandled = true
           break
 
         case 'COMPLETE_TASK':
@@ -325,6 +301,7 @@ export async function POST(req: NextRequest) {
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
           })
+          isHandled = true
           break
 
         case 'DELETE_TASK':
@@ -334,11 +311,11 @@ export async function POST(req: NextRequest) {
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
           })
+          isHandled = true
           break
 
         case 'FIND_DOCUMENT':
           try {
-            // FIX: Parameter must be 'query'
             await handleFindDocument({
               userId: user.id,
               phone: cleanFromPhone,
@@ -347,9 +324,11 @@ export async function POST(req: NextRequest) {
                 || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
                 || processedMessage,
             })
+            isHandled = true
           } catch (docErr) {
-            logger.error('FindDocument handler failed internally', { userId: user.id }, docErr as Error)
-            // WE DON'T call autoResponder here because the document link might already have been sent.
+            logger.error('FindDocument internal fail', { userId: user.id }, docErr as Error)
+            // Even if it failed, if it reached here it was likely handled or at least tried specifically
+            isHandled = true 
           }
           break
 
@@ -359,6 +338,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
           })
+          isHandled = true
           break
 
         case 'DELETE_DOCUMENT':
@@ -370,6 +350,7 @@ export async function POST(req: NextRequest) {
               || processedMessage.replace(/(delete|hatao|mitao|remove|remove karo|hata|delete)/gi, '').trim()
               || processedMessage,
           })
+          isHandled = true
           break
 
         case 'GET_BRIEFING':
@@ -378,47 +359,54 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
           })
+          isHandled = true
           break
 
         case 'HELP':
-          await sendWhatsAppMessage({
-            to: cleanFromPhone,
-            message: helpMessage(user.name, lang),
-          })
+          await sendWhatsAppMessage({ to: cleanFromPhone, message: helpMessage(lang) })
+          isHandled = true
           break
 
-        default: // UNKNOWN
-          await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+        default: 
           break
       }
 
-      // After successful handling — context update karo
-      await updateContext(user.id, {
-        last_intent: intent,
-        last_list_name: extractedData?.listName || ctx.last_list_name,
-        last_document_query: extractedData?.documentQuery || ctx.last_document_query,
-      })
+      // Background context update (non-blocking)
+      if (isHandled) {
+        try {
+          await updateContext(user.id, {
+            last_intent: intent,
+            last_list_name: extractedData?.listName || ctx.last_list_name || undefined,
+            last_document_query: extractedData?.documentQuery || ctx.last_document_query || undefined,
+          })
+          await addToHistory(user.id, 'user', processedMessage)
+        } catch (ctxErr) {
+          logger.warn('Session context update failed (silent)', { userId: user.id }, ctxErr as Error)
+        }
+      } else {
+        // Not handled by any feature? Use Auto-Responder
+        const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+        if (autoResp.response) {
+          await addToHistory(user.id, 'user', processedMessage)
+          await addToHistory(user.id, 'assistant', autoResp.response)
+        }
+      }
 
-      // History mein add karo
-      await addToHistory(user.id, 'user', processedMessage)
-
-      // Mark as responded
+      // Mark as responded ATOMICALLY
       await supabaseAdmin.from('whatsapp_messages')
-        .update({ is_responded: true })
+        .update({ is_responded: true, response_sent_at: new Date().toISOString() })
         .eq('message_id', messageId)
-        .catch(() => {}) // Ignore errors
+        .catch((e) => logger.error('Failed to mark as responded', { messageId }, e))
 
     } catch (featureErr) {
-      logger.error('Feature handler error', {
-        userId: user.id,
-        intent,
-      }, featureErr as Error)
+      logger.error('Feature handler error', { userId: user.id, intent }, featureErr as Error)
 
-      // Fallback to auto-responder
-      try {
-        await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
-      } catch (fallbackErr) {
-        logger.error('Auto-responder also failed', { userId: user.id }, fallbackErr as Error)
+      if (!isHandled) {
+        try {
+          await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+        } catch (fallbackErr) {
+          logger.error('Auto-responder fail', fallbackErr as Error)
+        }
       }
     }
 

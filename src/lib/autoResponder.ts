@@ -51,19 +51,6 @@ export async function generateAutoResponse(
     try {
         console.log('[autoResponder] Triggered')
 
-        // ── GUARDRAIL 0: Idempotency check ───────────────────────
-        const { data: alreadyResponded } = await supabaseAdmin
-            .from('whatsapp_messages')
-            .select('id')
-            .eq('message_id', messageId)
-            .eq('is_responded', true)
-            .maybeSingle()
-
-        if (alreadyResponded) {
-            console.log('[autoResponder] Already responded to:', messageId)
-            return { success: true, response: 'Duplicate prevention — already responded', sent: false }
-        }
-
         // ── GUARDRAIL 1: Input validation ─────────────────────────
         if (!fromNumber || !toNumber || !messageId) {
             return { success: false, error: 'Missing required parameters' }
@@ -74,6 +61,32 @@ export async function generateAutoResponse(
 
         if (cleanFrom.length < 10 || cleanTo.length < 10) {
             return { success: false, error: 'Invalid phone numbers' }
+        }
+
+        const { data: alreadyResponded } = await supabaseAdmin
+            .from('whatsapp_messages')
+            .select('id')
+            .eq('message_id', messageId)
+            .eq('is_responded', true)
+            .maybeSingle()
+
+        if (alreadyResponded) {
+            console.log('[autoResponder] Already responded (flag) to:', messageId)
+            return { success: true, response: 'Duplicate prevention — already responded', sent: false }
+        }
+
+        // ── GUARDRAIL 0.1: Check for very recent outgoing messages ──
+        const { data: recentMt } = await supabaseAdmin
+            .from('whatsapp_messages')
+            .select('id')
+            .eq('to_number', cleanFrom)
+            .eq('event_type', 'MtMessage')
+            .gte('received_at', new Date(Date.now() - 10000).toISOString()) // Last 10s
+            .limit(1)
+
+        if (recentMt && recentMt.length > 0) {
+            console.log('[autoResponder] Detected very recent outgoing message, skipping to avoid double reply')
+            return { success: true, response: 'Safety skip — recent reply detected', sent: false }
         }
 
         // ── GUARDRAIL 2: Empty message ────────────────────────────
