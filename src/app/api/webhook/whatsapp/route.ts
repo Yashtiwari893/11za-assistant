@@ -219,7 +219,17 @@ export async function POST(req: NextRequest) {
 
     // ─── INTENT CLASSIFICATION ───────────────────────────
     logger.debug('Classifying intent', { userId: user.id })
-    const intentResult = await classifyIntent(processedMessage, lang, ctx)
+    
+    // Safety Guard: Conversational cues shouldn't trigger heavy features
+    const lowerMessage = processedMessage.toLowerCase().trim()
+    const conversationalCues = ['done', 'ok', 'okay', 'thanks', 'thank you', 'dhanyawad', 'shukriya', 'thnx', 'wow', 'good']
+    
+    let intentResult;
+    if (conversationalCues.includes(lowerMessage)) {
+      intentResult = { intent: 'UNKNOWN', confidence: 1.0, extractedData: {} }
+    } else {
+      intentResult = await classifyIntent(processedMessage, lang, ctx)
+    }
 
     logger.info('Intent classified', {
       userId: user.id,
@@ -228,8 +238,6 @@ export async function POST(req: NextRequest) {
     })
 
     // ─── KEYWORD-BASED INTENT OVERRIDE (Safety Net) ───────
-    const lowerMessage = processedMessage.toLowerCase()
-    
     // Recovery/Find override
     if (lowerMessage.includes('dikhao') || lowerMessage.includes('show') || lowerMessage.includes('nikalo') || lowerMessage.includes('bhejo')) {
       if (intentResult.intent === 'UNKNOWN' || intentResult.confidence < 0.8) {

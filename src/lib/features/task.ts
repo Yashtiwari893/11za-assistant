@@ -276,6 +276,13 @@ export async function handleCompleteTask(params: {
 
   // ── GUARDRAIL: Task nahi mila ──────────────────────────────
   if (!tasks || tasks.length === 0) {
+    // If it's a generic "done" or very short, don't show the error.
+    // This allows the webhook to handle it via autoResponder for a smoother conversation.
+    const lowerContent = taskContent.toLowerCase().trim()
+    if (lowerContent === 'last item' || lowerContent === 'done' || lowerContent.length < 3) {
+      return
+    }
+
     await sendWhatsAppMessage({
       to: phone,
       message: language === 'hi'
