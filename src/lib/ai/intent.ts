@@ -123,9 +123,10 @@ UNKNOWN:
 ## CRITICAL RULES
 1. "Create X list with items" = ADD_TASK, NEVER FIND_DOCUMENT
 2. If message has list items (bullet points, commas) = ADD_TASK
-3. "dikhao/show/bhejo" alone on saved file name = FIND_DOCUMENT
-4. Multiple tasks in one message = ADD_TASK with all items
-5. Low confidence (< 0.6) = UNKNOWN, let auto-responder handle
+3. "dikhao/show/bhejo" + file name = FIND_DOCUMENT
+4. If the message is JUST a known list name (e.g. "grocery", "todo", "wedding list") = LIST_TASKS
+5. Single words representing a category (e.g. "grocery") without action words = LIST_TASKS
+6. Low confidence (< 0.6) = UNKNOWN, let auto-responder handle
 
 ## RESPONSE FORMAT (JSON only, no markdown)
 {

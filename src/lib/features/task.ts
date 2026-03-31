@@ -25,7 +25,10 @@ function cleanTaskContent(raw: string): string {
 
 // List name normalize karo — "groceries" → "grocery", "todo" → "general"
 function normalizeListName(raw: string): string {
-  const lower = raw.toLowerCase().trim()
+  const lower = raw.toLowerCase()
+    .replace(/\b(list|meri|daftar|items)\b/gi, '')
+    .trim()
+
   const aliases: Record<string, string> = {
     'groceries': 'grocery',
     'sabzi':     'grocery',
@@ -73,6 +76,7 @@ export async function handleAddTask(params: {
       await supabase.from('tasks').insert(
         items.map(item => ({
           list_id: listId,
+          user_id: userId, // CRITICAL FIX: Add missing user_id
           content: item,
           status: 'pending'
         }))
