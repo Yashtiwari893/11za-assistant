@@ -152,12 +152,12 @@ export async function classifyIntent(
   const now = new Date()
   const istOffset = 5.5 * 60 * 60 * 1000
   const istDate = new Date(now.getTime() + istOffset)
-  
+
   const dateStr = istDate.toDateString()
   const timeStr = istDate.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' })
 
   // Context-aware hints
-  const contextHint = context?.last_intent 
+  const contextHint = context?.last_intent
     ? `\nPrevious intent: ${context.last_intent}. Last list: ${context.last_list_name || 'none'}.`
     : ''
 
@@ -165,9 +165,9 @@ export async function classifyIntent(
     const completion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { 
-          role: 'user', 
-          content: `Current local time (IST): ${dateStr}, ${timeStr}. Language: ${lang}.${contextHint}\n\nMessage: "${message}"` 
+        {
+          role: 'user',
+          content: `Current local time (IST): ${dateStr}, ${timeStr}. Language: ${lang}.${contextHint}\n\nMessage: "${message}"`
         }
       ],
       model: 'llama-3.3-70b-versatile',

@@ -27,8 +27,8 @@ function ChatBubble({ msg, delay }: { msg: typeof CHAT_MESSAGES[0]; delay: numbe
         >
             <div
                 className={`px-4 py-2 rounded-2xl text-sm max-w-[80%] ${isBot
-                        ? "bg-white text-gray-800 rounded-tl-sm shadow-sm"
-                        : "text-white rounded-tr-sm"
+                    ? "bg-white text-gray-800 rounded-tl-sm shadow-sm"
+                    : "text-white rounded-tr-sm"
                     }`}
                 style={isBot ? {} : { background: "linear-gradient(135deg, #25D366, #128C7E)" }}
             >
@@ -109,7 +109,7 @@ export default function HomePage() {
                     <span className="text-xs text-gray-500 ml-1">by 11za</span>
                 </div>
                 <a
-                    href="https://wa.me/919726654060"
+                    href="https://wa.me/15558346206"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm font-medium px-5 py-2 rounded-full transition-all hover:opacity-90"
@@ -144,7 +144,7 @@ export default function HomePage() {
 
                     <div className="flex flex-wrap gap-4">
                         <a
-                            href="https://wa.me/919726654060?text=Hi"
+                            href="https://wa.me/15558346206?text=Hi"
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-2 px-7 py-3.5 rounded-full text-base font-semibold transition-all hover:opacity-90 glow-green"
@@ -281,7 +281,7 @@ export default function HomePage() {
                         Koi credit card nahi. Koi app nahi. Sirf WhatsApp pe "Hi" bhejo aur ZARA baaki sambhal lega।
                     </p>
                     <a
-                        href="https://wa.me/919726654060?text=Hi"
+                        href="https://wa.me/15558346206?text=Hi"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-2 px-8 py-4 rounded-full text-base font-semibold transition-all hover:opacity-90"
