@@ -26,7 +26,7 @@ function cleanTaskContent(raw: string): string {
 // List name normalize karo — "groceries" → "grocery", "todo" → "general"
 function normalizeListName(raw: string): string {
   const lower = raw.toLowerCase()
-    .replace(/\b(list|meri|daftar|items)\b/gi, '')
+    .replace(/\b(list|meri|daftar|items|show|dikha|bhejo|nikalo|check|get|find)\b/gi, '')
     .trim()
 
   const aliases: Record<string, string> = {
@@ -73,14 +73,20 @@ export async function handleAddTask(params: {
     })
 
     if (listId) {
-      await supabase.from('tasks').insert(
+      const { error: batchErr } = await supabase.from('tasks').insert(
         items.map(item => ({
           list_id: listId,
-          user_id: userId, // CRITICAL FIX: Add missing user_id
+          user_id: userId,
           content: item,
-          status: 'pending'
+          completed: false // FIX: System uses 'completed', not 'status'
         }))
       )
+
+      if (batchErr) {
+        console.error('[task] Batch insert failed:', batchErr)
+        await sendWhatsAppMessage({ to: phone, message: errorMessage(language) })
+        return
+      }
     }
     
     await sendWhatsAppMessage({
@@ -178,12 +184,15 @@ export async function handleListTasks(params: {
   const { userId, phone, language } = params
   const listName = normalizeListName(params.listName)
 
-  const { data: list } = await supabase
+  const { data: lists } = await supabase
     .from('lists')
     .select('id, name')
     .eq('user_id', userId)
     .ilike('name', `%${listName}%`)
-    .single()
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  const list = lists?.[0]
 
   // ── GUARDRAIL: List exist nahi karti ──────────────────────
   if (!list) {
@@ -251,12 +260,15 @@ export async function handleCompleteTask(params: {
   // List filter agar diya ho
   if (listName) {
     const normalizedList = normalizeListName(listName)
-    const { data: list } = await supabase
+    const { data: lists } = await supabase
       .from('lists')
       .select('id')
       .eq('user_id', userId)
       .ilike('name', `%${normalizedList}%`)
-      .single()
+      .order('created_at', { ascending: false })
+      .limit(1)
+    
+    const list = lists?.[0]
     if (list) query = query.eq('list_id', list.id)
   }
 
@@ -305,12 +317,15 @@ export async function handleDeleteTask(params: {
     .ilike('content', `%${taskContent}%`)
 
   if (listName) {
-    const { data: list } = await supabase
+    const { data: lists } = await supabase
       .from('lists')
       .select('id')
       .eq('user_id', userId)
       .ilike('name', `%${normalizeListName(listName)}%`)
-      .single()
+      .order('created_at', { ascending: false })
+      .limit(1)
+    
+    const list = lists?.[0]
     if (list) query = query.eq('list_id', list.id)
   }
 
@@ -347,12 +362,15 @@ export async function handleClearCompleted(params: {
   const { userId, phone, language } = params
   const listName = normalizeListName(params.listName)
 
-  const { data: list } = await supabase
+  const { data: lists } = await supabase
     .from('lists')
     .select('id, name')
     .eq('user_id', userId)
     .ilike('name', `%${listName}%`)
-    .single()
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  const list = lists?.[0]
 
   if (!list) {
     await sendWhatsAppMessage({
