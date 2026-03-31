@@ -246,38 +246,46 @@ export async function handleFindDocument(params: {
 }) {
   const { userId, phone, language, query } = params
 
-  // Clean conversational words from query
-  // Clean conversational words from query
+  // 1. Clean the query
   const cleanQuery = query.toLowerCase()
     .replace(/\b(mera|meri|mujhe|de|do|dikhao|wala|wali|card|copy|pdf|photo|chahiye|find|my|show|give|me|document|vault|nikalo|check|lao|bhejo|of|the|a|an)\b/g, '')
     .replace(/\s+/g, ' ')
     .trim()
 
-  const finalQuery = cleanQuery.length > 1 ? cleanQuery : query.trim()
-  const words = finalQuery.split(/\s+/).filter(w => w.length > 2) // only words > 2 chars for precision
+  const finalQuery = cleanQuery || query.trim().toLowerCase()
 
-  if (words.length === 0) {
-    await sendWhatsAppMessage({
-      to: phone,
-      message: language === 'hi'
-        ? '❓ Kaunsa document chahiye? Naam batao। Jaise "aadhar dikhao" ya "passport do"'
-        : '❓ Which document do you need? E.g. "show aadhar" or "give passport"'
-    })
-    return
-  }
-
-  // OR search — koi bhi word match kare
-  const orConditions = words.map(w => `label.ilike.%${w}%`).join(',')
-
-  const { data: results, error } = await supabase
+  // 2. PRIORITY 1: Exact Match (Best for keywords like "1", "11", "Aadhar")
+  const { data: exactMatch } = await supabase
     .from('documents')
     .select('*')
     .eq('user_id', userId)
-    .or(orConditions)
+    .ilike('label', finalQuery) // Exact label match (case insensitive)
     .order('uploaded_at', { ascending: false })
+    .limit(1)
+
+  let results = exactMatch || []
+
+  // 3. PRIORITY 2: Fuzzy/Partial Word Search (If no exact match)
+  if (results.length === 0) {
+    const words = finalQuery.split(/\s+/).filter(w => 
+      w.length > 2 || /^\d+$/.test(w) // Allow short numbers but not short fluff
+    )
+
+    if (words.length > 0) {
+      const orConditions = words.map(w => `label.ilike.%${w}%`).join(',')
+      const { data: partialMatch } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('user_id', userId)
+        .or(orConditions)
+        .order('uploaded_at', { ascending: false })
+      
+      results = partialMatch || []
+    }
+  }
 
   // ── GUARDRAIL: Not found ───────────────────────────────────
-  if (error || !results || results.length === 0) {
+  if (results.length === 0) {
     // List karo available documents taaki user ko pata chale
     const { data: allDocs } = await supabase
       .from('documents')
