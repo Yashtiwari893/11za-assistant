@@ -127,21 +127,20 @@ export async function handleSaveDocument(params: {
     }
   }
 
-  // ── If Drive not connected OR Drive upload failed → prompt / Supabase ──
+  // ── If Drive not connected, we notify but CONTINUE saving to Supabase ──
   if (!driveConnected && !driveFileId) {
-    // First time — ask user to connect Drive
     const connectUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/google?phone=${phone}`
     await sendWhatsAppMessage({
       to: phone,
       message: language === 'hi'
-        ? `📁 *Document save karne se pehle, apni Google Drive connect karo!*\n\nYe ek baar ka kaam hai — phir kabhi nhi bolungi 😊\n\n👉 ${connectUrl}\n\n_Link 10 min ke liye valid hai।_`
-        : `📁 *Connect your Google Drive to save documents!*\n\nThis is a one-time setup — I won't ask again 😊\n\n👉 ${connectUrl}\n\n_Link valid for 10 minutes._`
+        ? `📁 *Document safe hai, par Backup ke liye apni Google Drive connect karo!*\n\n👉 ${connectUrl}\n\n_Ek bar connect karte hi, aapke purane documents bhi Drive par aa jayenge! 😊_`
+        : `📁 *Document is safe, but connect Google Drive for Backup!*\n\n👉 ${connectUrl}\n\n_Old documents will also be synced once you connect! 😊_`
     })
-    return
+    // No return here — proceed to save to Supabase
   }
 
-  // ── If Drive failed mid-way, fallback to Supabase ─────────
-  if (driveConnected && !driveFileId) {
+  // ── If Drive failed (or not connected), save to Supabase as primary/fallback ──
+  if (!driveFileId) {
     storagePath = `${userId}/${Date.now()}_${label.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '')}.${ext}`
     const { error: uploadErr } = await supabase.storage
       .from('documents')
@@ -438,6 +437,56 @@ async function downloadMedia(url: string, authToken?: string): Promise<Buffer | 
   } catch (err) {
     console.error('[document] downloadMedia error:', err)
     return null
+  }
+}
+
+// ─── SYNC PENDING DOCUMENTS TO DRIVE ──────────────────────────
+export async function syncPendingDocumentsToDrive(userId: string) {
+  try {
+    const { data: pendingDocs } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('storage_type', 'supabase')
+      .is('drive_file_id', null)
+
+    if (!pendingDocs || pendingDocs.length === 0) return
+
+    // Import uploadToDrive dynamically
+    const { uploadToDrive } = await import('@/lib/googleDrive')
+
+    console.log(`[sync] Syncing ${pendingDocs.length} docs for user ${userId}`)
+
+    for (const doc of pendingDocs) {
+      try {
+        const { data: fileData, error: downloadErr } = await supabase.storage
+          .from('documents')
+          .download(doc.storage_path!)
+
+        if (downloadErr || !fileData) continue
+
+        const buffer = Buffer.from(await fileData.arrayBuffer())
+
+        const driveResult = await uploadToDrive({
+          userId,
+          fileBuffer: buffer,
+          fileName: `${doc.label.replace(/\s+/g, '_')}_${Date.now()}.${getExtension(doc.mime_type)}`,
+          mimeType: doc.mime_type
+        })
+
+        if (driveResult?.fileId) {
+          await supabase.from('documents').update({
+            drive_file_id: driveResult.fileId,
+            storage_type: 'google_drive'
+          }).eq('id', doc.id)
+          console.log(`[sync] Successfully synced: ${doc.label}`)
+        }
+      } catch (err) {
+        console.error('[sync] Individual doc sync failed:', err)
+      }
+    }
+  } catch (err) {
+    console.error('[sync] Global sync error:', err)
   }
 }
 

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { exchangeCodeForTokens } from '@/lib/googleDrive'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
+import { syncPendingDocumentsToDrive } from '@/lib/features/document'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -64,6 +65,15 @@ export async function GET(req: NextRequest) {
     }
 
     console.log('[google/callback] Tokens saved successfully')
+
+    // ── SYNC PREVIOUSLY SENT DOCUMENTS ──
+    // Jab user drive connect kar le, toh uske bina-drive waale docs sync kar do
+    try {
+      await syncPendingDocumentsToDrive(user.id)
+      console.log('[google/callback] Post-connect sync triggered')
+    } catch (syncErr) {
+      console.error('[google/callback] Sync failed:', syncErr)
+    }
 
     // 4. Send WhatsApp confirmation
     const lang = (user.language as string) || 'hi'
