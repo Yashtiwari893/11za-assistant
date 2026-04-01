@@ -13,8 +13,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
-// Max file size — 10MB
 const MAX_FILE_SIZE = 10 * 1024 * 1024
+
+import { validatePhone, validatePlainText } from '@/lib/infrastructure/inputValidator'
+import { updateContext } from '@/lib/infrastructure/sessionContext'
 
 // Supported MIME types
 const SUPPORTED_TYPES = [
@@ -154,7 +156,7 @@ export async function handleSaveDocument(params: {
   }
 
   // ── Save metadata to DB ────────────────────────────────────
-  const { error: dbErr } = await supabase.from('documents').insert({
+  const { data: inserted, error: dbErr } = await supabase.from('documents').insert({
     user_id: userId,
     label,
     storage_path: storagePath,
@@ -163,7 +165,7 @@ export async function handleSaveDocument(params: {
     doc_type: docType,
     mime_type: normalizedType,
     file_size: mediaBuffer.length,
-  })
+  }).select('id').single()
 
   if (dbErr) {
     console.error('[document] DB insert failed:', dbErr)
@@ -176,10 +178,11 @@ export async function handleSaveDocument(params: {
 
   // ── No caption — ask for label ──────────────────────────
   if (!caption?.trim()) {
-    await saveSessionState(userId, {
+    await updateContext(userId, {
       pending_action: 'awaiting_label',
-      document_path: storagePath,
-      drive_file_id: driveFileId,
+      document_id: inserted?.id, // Use ID for reliability
+      document_path: storagePath || undefined,
+      drive_file_id: driveFileId || undefined,
       doc_type: docType
     })
 
@@ -227,7 +230,7 @@ export async function handleUpdateDocumentLabel(params: {
     .eq('storage_path', documentPath)
 
   // Clear session state
-  await saveSessionState(userId, {})
+  await updateContext(userId, { pending_action: undefined, document_id: undefined, document_path: undefined })
 
   await sendWhatsAppMessage({
     to: phone,
@@ -524,18 +527,4 @@ function getExtension(mimeType: string): string {
     'application/pdf': 'pdf',
   }
   return map[mimeType] ?? 'jpg'
-}
-
-async function saveSessionState(userId: string, context: object) {
-  const { data: existing } = await supabase
-    .from('sessions')
-    .select('id')
-    .eq('user_id', userId)
-    .single()
-
-  if (existing) {
-    await supabase.from('sessions').update({ context }).eq('id', existing.id)
-  } else {
-    await supabase.from('sessions').insert({ user_id: userId, context })
-  }
 }

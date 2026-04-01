@@ -6,6 +6,9 @@ export interface SessionContext {
   last_list_name?: string
   pending_action?: string
   document_path?: string
+  document_id?: string
+  drive_file_id?: string
+  doc_type?: string
   conversation_history?: Array<{role: string, content: string, ts: number}>
 }
 

@@ -200,19 +200,22 @@ export async function POST(req: NextRequest) {
 
     // ─── HANDLE PENDING ACTIONS (e.g., awaiting document label) ─
     if (ctx?.pending_action === 'awaiting_label') {
-      const label = processedMessage.trim().substring(0, 100)
-      await supabaseAdmin.from('documents')
-        .update({ label: validatePlainText(label, 100) })
-        .eq('storage_path', ctx.document_path)
-        .eq('user_id', user.id)
-      await supabaseAdmin.from('sessions')
-        .update({ context: {} })
-        .eq('user_id', user.id)
+      const rawLabel = processedMessage.trim()
+      const cleanLabel = rawLabel.replace(/[^a-zA-Z0-9\s\u0900-\u097F]/g, '').substring(0, 50)
+      
+      const updateQuery = ctx.document_id 
+        ? supabaseAdmin.from('documents').update({ label: cleanLabel }).eq('id', ctx.document_id)
+        : supabaseAdmin.from('documents').update({ label: cleanLabel }).eq('storage_path', ctx.document_path).eq('user_id', user.id)
+
+      await updateQuery
+      
+      await supabaseAdmin.from('sessions').update({ context: {} }).eq('user_id', user.id)
+      
       await sendWhatsAppMessage({
         to: cleanFromPhone,
         message: lang === 'hi'
-          ? `📁 *${label}* के नाम से save हो गया!\n\n_"${label} दिखाओ" बोलकर फिर से पा सकते हो।_`
-          : `📁 Saved as *${label}*!\n\nSay "show ${label}" anytime to get it back.`
+          ? `📁 *${cleanLabel}* के नाम से save हो गया!\n\n_"${cleanLabel} दिखाओ" बोलकर फिर से पा सकते हो।_`
+          : `📁 Saved as *${cleanLabel}*!\n\nSay "show ${cleanLabel}" anytime to get it back.`
       })
       return NextResponse.json({ ok: true })
     }
