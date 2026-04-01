@@ -26,7 +26,7 @@ export function reminderSet(
 ): string {
   const msgs: Record<Language, string> = {
     en: `⏰ *Reminder set!*\n\n📝 ${title}\n🕐 ${humanReadable}\n\n_I'll notify you then!_`,
-    hi: `⏰ *रिमाइंडर सेट!*\n\n📝 ${title}\n🕐 ${humanReadable}\n\n_उस समय याद दिलाऊंगा!_`,
+    hi: `⏰ *रिमाइंडर सेट!*\n\n📝 ${title}\n🕐 ${humanReadable}\n\n_Done! Yaad dila dungi!_`,
     gu: `⏰ *રિમાઇન્ડર સેટ!*\n\n📝 ${title}\n🕐 ${humanReadable}\n\n_ત્યારે યાદ અપાવીશ!_`,
   }
   return msgs[lang]
@@ -40,7 +40,7 @@ export function reminderAlert(
   const noteText = note ? `\n📌 ${note}` : ''
   const msgs: Record<Language, string> = {
     en: `⏰ *Reminder*\n\n📝 ${title}${noteText}`,
-    hi: `⏰ *रिमाइंडर*\n\n📝 ${title}${noteText}`,
+    hi: `⏰ *Reminder*\n\n📝 ${title}${noteText}`,
     gu: `⏰ *રિમાઇન્ડર*\n\n📝 ${title}${noteText}`,
   }
   return msgs[lang]
@@ -49,7 +49,7 @@ export function reminderAlert(
 export function reminderSnoozed(humanReadable: string, lang: Language): string {
   const msgs: Record<Language, string> = {
     en: `⏰ *Snoozed!*\n\n_I'll remind you at ${humanReadable}_`,
-    hi: `⏰ *स्नूज़ हो गया!*\n\n_${humanReadable} पर याद दिलाऊंगा_`,
+    hi: `⏰ *Snooze ho gaya!*\n\n_${humanReadable} par yaad dila dungi_`,
     gu: `⏰ *સ્નૂઝ થઈ ગયું!*\n\n_${humanReadable} વાગ્યે યાદ અપાવીશ_`,
   }
   return msgs[lang]
@@ -62,7 +62,7 @@ export function reminderList(
   if (reminders.length === 0) {
     const empty: Record<Language, string> = {
       en: '📭 You have no pending reminders.',
-      hi: '📭 कोई पेंडिंग रिमाइंडर नहीं है।',
+      hi: '📭 Abhi koi pending reminder nahi hai.',
       gu: '📭 કોઈ પેન્ડિંગ રિમાઇન્ડર નથી.',
     }
     return empty[lang]
@@ -70,7 +70,7 @@ export function reminderList(
 
   const header: Record<Language, string> = {
     en: '⏰ *Your Reminders:*',
-    hi: '⏰ *आपके रिमाइंडर:*',
+    hi: '⏰ *Aapke Reminders:*',
     gu: '⏰ *આપના રિમાઇન્ડર:*',
   }
 
@@ -91,7 +91,7 @@ export function reminderList(
 export function taskAdded(content: string, listName: string, lang: Language): string {
   const msgs: Record<Language, string> = {
     en: `✅ Added *${content}* to your *${listName}* list!`,
-    hi: `✅ *${content}* को *${listName}* list में add किया!`,
+    hi: `✅ *${content}* ko *${listName}* list mein add kar diya!`,
     gu: `✅ *${content}* ને *${listName}* list માં add કર્યું!`,
   }
   return msgs[lang]
@@ -113,7 +113,7 @@ export function taskList(
 
   const nothingPending: Record<Language, string> = {
     en: '_Nothing pending_',
-    hi: '_कुछ पेंडिंग नहीं_',
+    hi: '_Kuch pending nahi hai_',
     gu: '_કંઈ બાકી નથી_',
   }
 
@@ -131,7 +131,7 @@ export function taskList(
 export function taskCompleted(content: string, lang: Language): string {
   const msgs: Record<Language, string> = {
     en: `✅ *${content}* marked as done!`,
-    hi: `✅ *${content}* complete हो गया!`,
+    hi: `✅ *${content}* complete ho gaya!`,
     gu: `✅ *${content}* પૂર્ણ થઈ ગયું!`,
   }
   return msgs[lang]

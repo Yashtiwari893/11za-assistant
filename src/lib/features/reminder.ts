@@ -69,7 +69,7 @@ export async function handleSetReminder(params: {
         to: phone,
         message: language === 'hi'
           ? '⚠️ Maaf kijiye, par main thik se yaad dilane ke liye kam se kam 1 minute ka waqt leti hoon। Kripya 60 seconds se zyada ka samay chuniye! 😊'
-          : "⚠️ I apologize, but I require at least 1 minute's lead time to ensure your reminder is processed accurately. Please set it for at least 60 seconds from now! 😊"
+          : "⚠️ Sorry, but I need at least 1 minute's gap to set a reminder correctly. Please pick a time at least 60 seconds away! 😊"
       })
       return
     }
@@ -263,7 +263,7 @@ export async function handleSnoozeReminder(params: {
         to: phone,
         message: language === 'hi'
           ? '⚠️ Maaf kijiye, par main thik se yaad dilane ke liye kam se kam 1 minute ka waqt leti hoon। 😊'
-          : "⚠️ I apologize, but I require at least 1 minute's lead time to snooze properly. 😊"
+          : "⚠️ Sorry, I need at least a 1-minute delay to snooze properly. 😊"
       })
       return
     }
