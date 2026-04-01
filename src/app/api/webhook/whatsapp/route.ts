@@ -257,13 +257,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ─── ABUSE/GALI DETECTION ────────────────────────────
+    const abusePattern = /\b(kutte|bc|bhenchod|madarchod|mc|hrami|saale|sale|kamine|kutta)\b/i
+    const hasAbuse = abusePattern.test(lowerMessage)
+    let abuseWarning = ''
+
+    if (hasAbuse) {
+      abuseWarning = lang === 'hi' 
+        ? '⚠️ Main yahan aapki help ke liye hoon professionally. Kripya respect ke saath baat karein taaki main behtar assist kar sakoon! 😊\n\n'
+        : '⚠️ I am here to help you professionally. Please keep our conversation respectful so I can assist you better! 😊\n\n'
+    }
+
     // ─── ROUTE TO FEATURE HANDLERS ────────────────────────
     let isHandled = false
     const { intent, extractedData } = intentResult
 
+    // Helper to send message with optional abuse warning
+    const sendReply = async (msg: string) => {
+      await sendWhatsAppMessage({ to: cleanFromPhone, message: abuseWarning + msg })
+    }
+
     try {
       switch (intent) {
         case 'SET_REMINDER':
+          // Pass abuseWarning to handleSetReminder so it can prepend if needed
           await handleSetReminder({
             userId: user.id,
             phone: cleanFromPhone,
@@ -271,6 +288,7 @@ export async function POST(req: NextRequest) {
             message: processedMessage,
             dateTimeText: extractedData.dateTimeText || processedMessage,
             reminderTitle: extractedData.reminderTitle || processedMessage,
+            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -291,6 +309,7 @@ export async function POST(req: NextRequest) {
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
             listName: extractedData.listName || 'general',
+            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -301,6 +320,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             listName: extractedData.listName || 'general',
+            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -311,6 +331,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
+            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -321,6 +342,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
+            prefix: abuseWarning
           })
           isHandled = true
           break

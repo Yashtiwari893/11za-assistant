@@ -52,8 +52,9 @@ export async function handleAddTask(params: {
   taskContent: string
   listName: string
   workspaceId?: string
+  prefix?: string
 }) {
-  const { userId, phone, language, listName, workspaceId } = params
+  const { userId, phone, language, listName, workspaceId, prefix = '' } = params
 
   // ── Multi-item Parsing ──────────────────────────────────────
   const items = params.taskContent
@@ -91,9 +92,9 @@ export async function handleAddTask(params: {
     
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? `✅ *${normalized}* list mein ${items.length} items add ho gaye!\n${items.map(i => `• ${i}`).join('\n')}`
-        : `✅ Added ${items.length} items to *${normalized}*!\n${items.map(i => `• ${i}`).join('\n')}`
+        : `✅ Added ${items.length} items to *${normalized}*!\n${items.map(i => `• ${i}`).join('\n')}`)
     })
     return
   }
@@ -134,9 +135,9 @@ export async function handleAddTask(params: {
     if (dupTask && dupTask.length > 0) {
       await sendWhatsAppMessage({
         to: phone,
-        message: language === 'hi'
+        message: prefix + (language === 'hi'
           ? `⚠️ *${taskContent}* already *${finalListName}* list mein hai!`
-          : `⚠️ *${taskContent}* is already in your *${finalListName}* list!`
+          : `⚠️ *${taskContent}* is already in your *${finalListName}* list!`)
       })
       return
     }
@@ -170,7 +171,7 @@ export async function handleAddTask(params: {
 
   await sendWhatsAppMessage({
     to: phone,
-    message: taskAdded(taskContent, listName, language)
+    message: prefix + taskAdded(taskContent, listName, language)
   })
 }
 
@@ -180,8 +181,9 @@ export async function handleListTasks(params: {
   phone: string
   language: Language
   listName: string
+  prefix?: string
 }) {
-  const { userId, phone, language } = params
+  const { userId, phone, language, prefix = '' } = params
   const listName = normalizeListName(params.listName)
 
   const { data: lists } = await supabase
@@ -198,9 +200,9 @@ export async function handleListTasks(params: {
   if (!list) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? `📭 "${listName}" naam ki koi list nahi hai।\n\n_"${listName} mein kuch add karo" bolke list banao!_`
-        : `📭 No list found named "${listName}".\n\n_Say "add something to ${listName}" to create it!_`
+        : `📭 No list found named "${listName}".\n\n_Say "add something to ${listName}" to create it!_`)
     })
     return
   }
@@ -215,16 +217,16 @@ export async function handleListTasks(params: {
   if (!tasks || tasks.length === 0) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? `📭 *${list.name}* list abhi khali hai।\n\n_Kuch add karo: "${list.name} mein milk add karo"_`
-        : `📭 *${list.name}* list is empty.\n\n_Add something: "add milk to ${list.name}"_`
+        : `📭 *${list.name}* list is empty.\n\n_Add something: "add milk to ${list.name}"_`)
     })
     return
   }
 
   await sendWhatsAppMessage({
     to: phone,
-    message: taskList(list.name, tasks, language)
+    message: prefix + taskList(list.name, tasks, language)
   })
 }
 
@@ -235,17 +237,18 @@ export async function handleCompleteTask(params: {
   language: Language
   taskContent: string
   listName?: string
+  prefix?: string
 }) {
-  const { userId, phone, language, listName } = params
+  const { userId, phone, language, listName, prefix = '' } = params
   const taskContent = cleanTaskContent(params.taskContent)
 
   // ── GUARDRAIL: Empty content ───────────────────────────────
   if (!taskContent || taskContent.length < 2) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? '❓ Kaunsa task complete karna hai? Naam batao।'
-        : '❓ Which task did you complete? Please mention the name.'
+        : '❓ Which task did you complete? Please mention the name.')
     })
     return
   }
@@ -285,9 +288,9 @@ export async function handleCompleteTask(params: {
 
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
-        ? `❓ "${taskContent}" naam ka koi pending task nahi mila।\n\n_"Meri list dikhao" bolke check karo।_`
-        : `❓ No pending task found matching "${taskContent}".\n\n_Say "show my list" to check._`
+      message: prefix + (language === 'hi'
+        ? `❓ Merri list mein "${taskContent}" nahi mila. Kripya check karein.`
+        : `❓ Couldn't find "${taskContent}" in your list. Please check.`)
     })
     return
   }
@@ -302,7 +305,7 @@ export async function handleCompleteTask(params: {
 
   await sendWhatsAppMessage({
     to: phone,
-    message: taskCompleted(tasks[0].content, language)
+    message: prefix + taskCompleted(tasks[0].content, language)
   })
 }
 
@@ -313,8 +316,9 @@ export async function handleDeleteTask(params: {
   language: Language
   taskContent: string
   listName?: string
+  prefix?: string
 }) {
-  const { userId, phone, language, listName } = params
+  const { userId, phone, language, listName, prefix = '' } = params
   const taskContent = cleanTaskContent(params.taskContent)
 
   let query = supabase
@@ -341,9 +345,9 @@ export async function handleDeleteTask(params: {
   if (!tasks || tasks.length === 0) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
-        ? `❓ "${taskContent}" naam ka koi task nahi mila delete karne ke liye।`
-        : `❓ No task found matching "${taskContent}" to delete.`
+      message: prefix + (language === 'hi'
+        ? `❓ Delete karne ke liye "${taskContent}" nahi mila.`
+        : `❓ Couldn't find "${taskContent}" to delete.`)
     })
     return
   }
@@ -352,9 +356,9 @@ export async function handleDeleteTask(params: {
 
   await sendWhatsAppMessage({
     to: phone,
-    message: language === 'hi'
+    message: prefix + (language === 'hi'
       ? `🗑️ *${tasks[0].content}* delete ho gaya!`
-      : `🗑️ *${tasks[0].content}* deleted!`
+      : `🗑️ *${tasks[0].content}* deleted!`)
   })
 }
 

@@ -42,20 +42,21 @@ export async function handleSetReminder(params: {
   message: string
   dateTimeText?: string
   reminderTitle?: string
+  prefix?: string // Support for abuse warning
 }) {
-  const { userId, phone, language, message, dateTimeText, reminderTitle } = params
+  const { userId, phone, language, message, dateTimeText, reminderTitle, prefix = '' } = params
 
   // Parse natural language date/time
   const textToParse = dateTimeText ?? message
   const parsed = await parseDateTime(textToParse)
 
   // ── GUARDRAIL: Date parse hi nahi hua ─────────────────────
-  if (!parsed.date && !parsed.isRecurring) {
+  if (!parsed || !parsed.date && !parsed.isRecurring) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
-        ? '❓ Kab remind karna hai? Jaise "kal 5 bje" ya "har Sunday 9am"'
-        : '❓ When should I remind you? E.g. "tomorrow 5pm" or "every Sunday 9am"'
+      message: prefix + (language === 'hi'
+        ? '❓ Maaf kijiye, mujhe time samajh nahi aaya. Kripya sahi se likhein, jaise "kal subah 9 baje" ya "Friday 5 PM".'
+        : "❓ Sorry, I couldn't understand the time. Please try something like 'tomorrow 9am' or 'Friday 5pm'.")
     })
     return
   }
@@ -67,9 +68,9 @@ export async function handleSetReminder(params: {
     if (diffMs < 60000) {
       await sendWhatsAppMessage({
         to: phone,
-        message: language === 'hi'
+        message: prefix + (language === 'hi'
           ? '⚠️ Maaf kijiye, par main thik se yaad dilane ke liye kam se kam 1 minute ka waqt leti hoon। Kripya 60 seconds se zyada ka samay chuniye! 😊'
-          : "⚠️ Sorry, but I need at least 1 minute's gap to set a reminder correctly. Please pick a time at least 60 seconds away! 😊"
+          : "⚠️ Sorry, but I need at least 1 minute's gap to set a reminder correctly. Please pick a time at least 60 seconds away! 😊")
       })
       return
     }
@@ -148,7 +149,7 @@ export async function handleSetReminder(params: {
   // ── Confirm to user ────────────────────────────────────────
   await sendWhatsAppMessage({
     to: phone,
-    message: reminderSet(title, parsed.humanReadable, language)
+    message: prefix + reminderSet(title, parsed.humanReadable, language)
   })
 }
 
@@ -157,8 +158,9 @@ export async function handleListReminders(params: {
   userId: string
   phone: string
   language: Language
+  prefix?: string
 }) {
-  const { userId, phone, language } = params
+  const { userId, phone, language, prefix = '' } = params
 
   const { data, error } = await supabase
     .from('reminders')
@@ -169,16 +171,16 @@ export async function handleListReminders(params: {
     .limit(10)
 
   if (error) {
-    await sendWhatsAppMessage({ to: phone, message: errorMessage(language) })
+    await sendWhatsAppMessage({ to: phone, message: prefix + errorMessage(language) })
     return
   }
 
   if (!data || data.length === 0) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? '📭 Abhi koi pending reminder nahi hai।'
-        : '📭 You have no pending reminders.'
+        : '📭 You have no pending reminders.')
     })
     return
   }
@@ -201,7 +203,7 @@ export async function handleListReminders(params: {
   }).join('\n\n')
 
   const header = language === 'hi' ? '⏰ *Aapke Reminders:*' : '⏰ *Your Reminders:*'
-  await sendWhatsAppMessage({ to: phone, message: `${header}\n\n${lines}` })
+  await sendWhatsAppMessage({ to: phone, message: prefix + `${header}\n\n${lines}` })
 }
 
 // ─── SNOOZE REMINDER ──────────────────────────────────────────
@@ -212,8 +214,9 @@ export async function handleSnoozeReminder(params: {
   language: Language
   minutes?: number
   customText?: string
+  prefix?: string
 }) {
-  const { reminderId, userId, phone, language, minutes, customText } = params
+  const { reminderId, userId, phone, language, minutes, customText, prefix = '' } = params
 
   let targetReminderId = reminderId
 
@@ -234,9 +237,9 @@ export async function handleSnoozeReminder(params: {
   if (!targetReminderId) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? '🤔 Koi recent reminder nahi mila jise snooze kar saku।'
-        : '🤔 No recent reminder found to snooze.'
+        : '🤔 No recent reminder found to snooze.')
     })
     return
   }
@@ -250,9 +253,9 @@ export async function handleSnoozeReminder(params: {
     if (!parsed.date) {
       await sendWhatsAppMessage({
         to: phone,
-        message: language === 'hi'
+        message: prefix + (language === 'hi'
           ? '❓ Kitne time baad remind karna hai? Jaise "1 ghante baad" ya "shaam 5 bje"'
-          : '❓ When should I remind you? E.g. "in 1 hour" or "at 5pm"'
+          : '❓ When should I remind you? E.g. "in 1 hour" or "at 5pm"')
       })
       return
     }
@@ -261,9 +264,9 @@ export async function handleSnoozeReminder(params: {
     if (diffMs < 60000) {
       await sendWhatsAppMessage({
         to: phone,
-        message: language === 'hi'
+        message: prefix + (language === 'hi'
           ? '⚠️ Maaf kijiye, par main thik se yaad dilane ke liye kam se kam 1 minute ka waqt leti hoon। 😊'
-          : "⚠️ Sorry, I need at least a 1-minute delay to snooze properly. 😊"
+          : "⚠️ Sorry, I need at least a 1-minute delay to snooze properly. 😊")
       })
       return
     }
@@ -289,7 +292,7 @@ export async function handleSnoozeReminder(params: {
 
   await sendWhatsAppMessage({
     to: phone,
-    message: reminderSnoozed(humanReadable, language)
+    message: prefix + reminderSnoozed(humanReadable, language)
   })
 }
 
@@ -299,8 +302,9 @@ export async function handleCancelReminder(params: {
   phone: string
   language: Language
   titleHint?: string   // user ne kaunsa cancel karna hai hint diya
+  prefix?: string
 }) {
-  const { userId, phone, language, titleHint } = params
+  const { userId, phone, language, titleHint, prefix = '' } = params
 
   // Agar title hint hai toh match karke cancel karo
   if (titleHint) {
@@ -316,9 +320,9 @@ export async function handleCancelReminder(params: {
     if (!found) {
       await sendWhatsAppMessage({
         to: phone,
-        message: language === 'hi'
+        message: prefix + (language === 'hi'
           ? `❓ "${titleHint}" naam ka koi pending reminder nahi mila।`
-          : `❓ No pending reminder found matching "${titleHint}".`
+          : `❓ No pending reminder found matching "${titleHint}".`)
       })
       return
     }
@@ -330,9 +334,9 @@ export async function handleCancelReminder(params: {
 
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? `🗑️ *${found.title}* reminder cancel ho gaya!`
-        : `🗑️ *${found.title}* reminder cancelled!`
+        : `🗑️ *${found.title}* reminder cancelled!`)
     })
     return
   }
@@ -350,9 +354,9 @@ export async function handleCancelReminder(params: {
   if (!recent) {
     await sendWhatsAppMessage({
       to: phone,
-      message: language === 'hi'
+      message: prefix + (language === 'hi'
         ? '📭 Koi pending reminder nahi hai cancel karne ke liye।'
-        : '📭 No pending reminders to cancel.'
+        : '📭 No pending reminders to cancel.')
     })
     return
   }
@@ -364,9 +368,9 @@ export async function handleCancelReminder(params: {
 
   await sendWhatsAppMessage({
     to: phone,
-    message: language === 'hi'
+    message: prefix + (language === 'hi'
       ? `🗑️ *${recent.title}* reminder cancel ho gaya!`
-      : `🗑️ *${recent.title}* reminder cancelled!`
+      : `🗑️ *${recent.title}* reminder cancelled!`)
   })
 }
 
@@ -375,8 +379,9 @@ export async function handleReminderDone(params: {
   reminderId: string
   phone: string
   language: Language
+  prefix?: string
 }) {
-  const { reminderId, phone, language } = params
+  const { reminderId, phone, language, prefix = '' } = params
 
   await supabase
     .from('reminders')
@@ -385,6 +390,6 @@ export async function handleReminderDone(params: {
 
   await sendWhatsAppMessage({
     to: phone,
-    message: language === 'hi' ? '✅ Done mark ho gaya!' : '✅ Marked as done!'
+    message: prefix + (language === 'hi' ? '✅ Done mark ho gaya!' : '✅ Marked as done!')
   })
 }
