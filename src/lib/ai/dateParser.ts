@@ -33,6 +33,16 @@ function quickParse(text: string): ParsedDateTime | null {
   const lower = text.toLowerCase().trim()
   const now = new Date()
 
+  // "X seconds baad" / "X sec baad"
+  const secMatch = lower.match(/(\d+)\s*(sec|second|seconds)\s*(baad|later|bad)?/)
+  if (secMatch) {
+    const secs = parseInt(secMatch[1])
+    if (secs > 0) {
+      const date = new Date(now.getTime() + secs * 1000)
+      return { ...EMPTY, date, confidence: 0.95, humanReadable: `In ${secs} second${secs > 1 ? 's' : ''}` }
+    }
+  }
+
   // "X minutes baad" / "X min baad"
   const minMatch = lower.match(/(\d+)\s*(min|minute|minutes)\s*(baad|later|bad)?/)
   if (minMatch) {
