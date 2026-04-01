@@ -60,26 +60,19 @@ export async function handleSetReminder(params: {
     return
   }
 
-  // ── GUARDRAIL 1: Past time check ──────────────────────────
-  if (parsed.date && parsed.date < new Date()) {
-    await sendWhatsAppMessage({
-      to: phone,
-      message: language === 'hi'
-        ? '⚠️ Ye time toh nikal gaya! Aage ka time batao।'
-        : '⚠️ That time has already passed! Please give a future time.'
-    })
-    return
-  }
-
-  // ── GUARDRAIL 2 (Bypass for testing): Allow any future time ─
-  if (parsed.date && parsed.date < new Date(Date.now() - 5000)) { // 5s grace
-    await sendWhatsAppMessage({
-      to: phone,
-      message: language === 'hi'
-        ? '⚠️ Ye time toh nikal gaya!'
-        : '⚠️ That time has already passed!'
-    })
-    return
+  // ── GUARDRAIL 1: Past / Too close (Min 60s) check ──────────
+  if (parsed.date) {
+    const diffMs = parsed.date.getTime() - Date.now()
+    
+    if (diffMs < 60000) {
+      await sendWhatsAppMessage({
+        to: phone,
+        message: language === 'hi'
+          ? '⚠️ Maaf kijiye, par main thik se yaad dilane ke liye kam se kam 1 minute ka waqt leti hoon। Kripya 60 seconds se zyada ka samay chuniye! 😊'
+          : "⚠️ I apologize, but I require at least 1 minute's lead time to ensure your reminder is processed accurately. Please set it for at least 60 seconds from now! 😊"
+      })
+      return
+    }
   }
 
   // ── Title — extracted ya cleaned ──────────────────────────
@@ -263,13 +256,14 @@ export async function handleSnoozeReminder(params: {
       })
       return
     }
-    // ── Snooze past time check ──
-    if (parsed.date < new Date()) {
+    // ── Snooze guard: Min 60s ──
+    const diffMs = parsed.date.getTime() - Date.now()
+    if (diffMs < 60000) {
       await sendWhatsAppMessage({
         to: phone,
         message: language === 'hi'
-          ? '⚠️ Ye time nikal gaya! Aage ka time do।'
-          : '⚠️ That time has passed! Give a future time.'
+          ? '⚠️ Maaf kijiye, par main thik se yaad dilane ke liye kam se kam 1 minute ka waqt leti hoon। 😊'
+          : "⚠️ I apologize, but I require at least 1 minute's lead time to snooze properly. 😊"
       })
       return
     }
