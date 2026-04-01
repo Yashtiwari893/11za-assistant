@@ -1,25 +1,42 @@
 // src/lib/autoResponder.ts
-// AI Auto Responder — Bulletproof version with guardrails
-// Ye RAG/General chat fallback hai — SAM features ke baad call hota hai
+// AI Auto-Responder — RAG/general chat fallback, invoked after SAM feature handlers.
 
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsAppMessage } from './whatsappSender'
 import Groq from 'groq-sdk'
 
-const supabaseAdmin = createClient(
+// ─── Constants ────────────────────────────────────────────────
+
+const CONVERSATION_HISTORY_LIMIT = 10
+const MAX_REPLY_TOKENS = 300
+const MAX_MESSAGE_LENGTH = 4000       // Groq context safety ceiling
+const MAX_PER_MESSAGE_LENGTH = 500    // Per-history-entry truncation
+const RECENT_OUTGOING_WINDOW_MS = 10_000
+const MIN_PHONE_LENGTH = 10
+
+const ZARA_BASE_RULES = `
+You are ZARA, a premium AI assistant for business and life.
+- Reply like a professional executive assistant — smart, efficient, polite.
+- Use a mix of English and Hindi (Hinglish) as per the user's vibe.
+- Keep replies VERY SHORT — 1 to 2 lines max.
+- When someone says "done", "ok", or "thanks", reply with a warm professional closing like "Great! Let me know if you need anything else. 😊" or "Noted. Aapki help karke khushi hui! ✅"
+`.trim()
+
+const FORBIDDEN_AI_PHRASES =
+    /knowledge base|training data|I was trained|my dataset|as an AI language model/i
+
+// ─── Supabase & Groq Clients ──────────────────────────────────
+
+const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
 
-// ─── CONSTANTS ────────────────────────────────────────────────
-const MAX_HISTORY = 10   // Last N messages for context
-const MAX_REPLY_TOKENS = 300
-const MAX_MSG_LENGTH = 4000 // Groq context limit safety
+// ─── Types ────────────────────────────────────────────────────
 
-// ─── TYPES ────────────────────────────────────────────────────
-export type AutoResponseResult = {
+export interface AutoResponseResult {
     success: boolean
     response?: string
     sent?: boolean
@@ -28,20 +45,183 @@ export type AutoResponseResult = {
     processed_by?: string
 }
 
-// ─── HELPERS ──────────────────────────────────────────────────
-function normalizePhone(num: string): string {
-    return num.replace(/\D/g, '')
+interface PhoneConfig {
+    systemPrompt: string
+    authToken: string
+    origin: string
 }
 
-function safeString(val: unknown): string {
-    return typeof val === 'string' ? val.trim() : ''
+interface HistoryMessage {
+    role: 'user' | 'assistant'
+    content: string
 }
 
-function truncate(text: string, maxLen: number): string {
-    return text.length > maxLen ? text.substring(0, maxLen) + '...' : text
+// ─── Helpers ──────────────────────────────────────────────────
+
+function normalizePhone(value: string): string {
+    return value.replace(/\D/g, '')
 }
 
-// ─── MAIN ─────────────────────────────────────────────────────
+function safeString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : ''
+}
+
+function truncate(text: string, maxLength: number): string {
+    return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text
+}
+
+function buildSystemPrompt(phoneSpecificPrompt: string): string {
+    return phoneSpecificPrompt
+        ? `${phoneSpecificPrompt}\n\n${ZARA_BASE_RULES}`
+        : ZARA_BASE_RULES
+}
+
+// ─── Database Queries ─────────────────────────────────────────
+
+async function hasAlreadyResponded(messageId: string): Promise<boolean> {
+    const { data } = await supabase
+        .from('whatsapp_messages')
+        .select('id')
+        .eq('message_id', messageId)
+        .eq('is_responded', true)
+        .maybeSingle()
+
+    return !!data
+}
+
+async function hasRecentOutgoingMessage(toNumber: string): Promise<boolean> {
+    const windowStart = new Date(Date.now() - RECENT_OUTGOING_WINDOW_MS).toISOString()
+
+    const { data } = await supabase
+        .from('whatsapp_messages')
+        .select('id')
+        .eq('to_number', toNumber)
+        .eq('event_type', 'MtMessage')
+        .gte('received_at', windowStart)
+        .limit(1)
+
+    return !!data && data.length > 0
+}
+
+async function fetchPhoneConfig(phoneNumber: string): Promise<PhoneConfig> {
+    const defaultConfig: PhoneConfig = {
+        systemPrompt: '',
+        authToken: process.env.WHATSAPP_AUTH_TOKEN ?? '',
+        origin: process.env.WHATSAPP_ORIGIN ?? '',
+    }
+
+    const { data } = await supabase
+        .from('phone_document_mapping')
+        .select('system_prompt, auth_token, origin')
+        .eq('phone_number', phoneNumber)
+        .limit(1)
+
+    if (!data || data.length === 0) {
+        console.log(`[autoResponder] No DB config for ${phoneNumber} — using environment defaults.`)
+        return defaultConfig
+    }
+
+    const row = data[0]
+    return {
+        systemPrompt: safeString(row.system_prompt),
+        authToken: safeString(row.auth_token) || defaultConfig.authToken,
+        origin: safeString(row.origin) || defaultConfig.origin,
+    }
+}
+
+async function fetchConversationHistory(fromNumber: string): Promise<HistoryMessage[]> {
+    const { data } = await supabase
+        .from('whatsapp_messages')
+        .select('content_text, event_type')
+        .or(`from_number.eq.${fromNumber},to_number.eq.${fromNumber}`)
+        .order('received_at', { ascending: true })
+        .limit(CONVERSATION_HISTORY_LIMIT * 2) // Over-fetch, then trim to last N
+
+    return (data ?? [])
+        .filter(
+            (row) =>
+                typeof row.content_text === 'string' &&
+                row.content_text.trim().length > 0 &&
+                (row.event_type === 'MoMessage' || row.event_type === 'MtMessage')
+        )
+        .map((row) => ({
+            role: row.event_type === 'MoMessage' ? ('user' as const) : ('assistant' as const),
+            content: truncate(safeString(row.content_text), MAX_PER_MESSAGE_LENGTH),
+        }))
+        .slice(-CONVERSATION_HISTORY_LIMIT)
+}
+
+async function persistBotMessage(params: {
+    botMessageId: string
+    fromNumber: string
+    toNumber: string
+    replyText: string
+    originalMessageId: string
+}): Promise<void> {
+    const { botMessageId, fromNumber, toNumber, replyText, originalMessageId } = params
+
+    const { error } = await supabase.from('whatsapp_messages').insert({
+        message_id: botMessageId,
+        channel: 'whatsapp',
+        from_number: fromNumber,
+        to_number: toNumber,
+        received_at: new Date().toISOString(),
+        content_type: 'text',
+        content_text: replyText,
+        sender_name: '11za Assistant',
+        event_type: 'MtMessage',
+        is_in_24_window: true,
+        raw_payload: {
+            source: 'auto_responder',
+            bot_response: true,
+            original_id: originalMessageId,
+        },
+    })
+
+    if (error) {
+        // Message was already delivered — log but don't fail the request.
+        console.warn('[autoResponder] Bot message persist failed:', error)
+    }
+}
+
+async function markMessageAsResponded(messageId: string): Promise<void> {
+    await supabase
+        .from('whatsapp_messages')
+        .update({
+            is_responded: true,
+            response_sent_at: new Date().toISOString(),
+        })
+        .eq('message_id', messageId)
+}
+
+// ─── LLM ─────────────────────────────────────────────────────
+
+async function generateLlmReply(params: {
+    systemPrompt: string
+    history: HistoryMessage[]
+    userText: string
+}): Promise<string | null> {
+    const { systemPrompt, history, userText } = params
+
+    const completion = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+            { role: 'system', content: systemPrompt },
+            ...history,
+            { role: 'user', content: userText },
+        ],
+        temperature: 0.3,
+        max_tokens: MAX_REPLY_TOKENS,
+    })
+
+    const raw = completion.choices[0]?.message?.content?.trim()
+    if (!raw || raw.length < 2) return null
+
+    return raw.replace(FORBIDDEN_AI_PHRASES, 'available information')
+}
+
+// ─── Main ─────────────────────────────────────────────────────
+
 export async function generateAutoResponse(
     fromNumber: string,
     toNumber: string,
@@ -51,7 +231,7 @@ export async function generateAutoResponse(
     try {
         console.log('[autoResponder] Triggered')
 
-        // ── GUARDRAIL 1: Input validation ─────────────────────────
+        // Guard: required fields present
         if (!fromNumber || !toNumber || !messageId) {
             return { success: false, error: 'Missing required parameters' }
         }
@@ -59,189 +239,82 @@ export async function generateAutoResponse(
         const cleanFrom = normalizePhone(fromNumber)
         const cleanTo = normalizePhone(toNumber)
 
-        if (cleanFrom.length < 10 || cleanTo.length < 10) {
+        // Guard: valid phone number format
+        if (cleanFrom.length < MIN_PHONE_LENGTH || cleanTo.length < MIN_PHONE_LENGTH) {
             return { success: false, error: 'Invalid phone numbers' }
         }
 
-        const { data: alreadyResponded } = await supabaseAdmin
-            .from('whatsapp_messages')
-            .select('id')
-            .eq('message_id', messageId)
-            .eq('is_responded', true)
-            .maybeSingle()
-
-        if (alreadyResponded) {
-            console.log('[autoResponder] Already responded (flag) to:', messageId)
+        // Guard: idempotency — don't reply to a message we've already handled
+        if (await hasAlreadyResponded(messageId)) {
+            console.log('[autoResponder] Duplicate — already responded to:', messageId)
             return { success: true, response: 'Duplicate prevention — already responded', sent: false }
         }
 
-        // ── GUARDRAIL 0.1: Check for very recent outgoing messages ──
-        const { data: recentMt } = await supabaseAdmin
-            .from('whatsapp_messages')
-            .select('id')
-            .eq('to_number', cleanFrom)
-            .eq('event_type', 'MtMessage')
-            .gte('received_at', new Date(Date.now() - 10000).toISOString()) // Last 10s
-            .limit(1)
-
-        if (recentMt && recentMt.length > 0) {
-            console.log('[autoResponder] Detected very recent outgoing message, skipping to avoid double reply')
+        // Guard: suppress reply if a bot message was sent in the last 10 seconds
+        if (await hasRecentOutgoingMessage(cleanFrom)) {
+            console.log('[autoResponder] Recent outgoing message detected — skipping to avoid double reply')
             return { success: true, response: 'Safety skip — recent reply detected', sent: false }
         }
 
-        // ── GUARDRAIL 2: Empty message ────────────────────────────
+        // Guard: non-empty message body
         const userText = safeString(messageText)
         if (!userText) {
             return { success: false, error: 'Empty message — nothing to respond to' }
         }
 
-        // ── GUARDRAIL 3: Message too long ─────────────────────────
-        const safeUserText = truncate(userText, MAX_MSG_LENGTH)
+        const safeUserText = truncate(userText, MAX_MESSAGE_LENGTH)
 
         console.log('[autoResponder] From:', cleanFrom, '| To:', cleanTo)
 
-        // ── 1. PHONE CONFIG ───────────────────────────────────────
-        let systemPromptBase = ''
-        let auth_token = process.env.WHATSAPP_AUTH_TOKEN ?? ''
-        let origin = process.env.WHATSAPP_ORIGIN ?? ''
+        const phoneConfig = await fetchPhoneConfig(cleanTo)
 
-        // Exact match check
-        const { data: phoneMappings } = await supabaseAdmin
-            .from('phone_document_mapping')
-            .select('system_prompt, intent, auth_token, origin')
-            .eq('phone_number', cleanTo)
-            .limit(1)
-
-        if (phoneMappings && phoneMappings.length > 0) {
-            const m = phoneMappings[0]
-            systemPromptBase = safeString(m.system_prompt)
-            // Only update token if DB has a specific one for THIS number
-            auth_token = safeString(m.auth_token) || auth_token
-            origin = safeString(m.origin) || origin
-        } else {
-            console.log(`[autoResponder] No specific DB config for ${cleanTo}. Using default environment credentials.`);
-        }
-
-        // ── GUARDRAIL 4: WhatsApp credentials check ───────────────
-        if (!auth_token || !origin) {
+        // Guard: WhatsApp credentials must be available
+        if (!phoneConfig.authToken || !phoneConfig.origin) {
             console.error('[autoResponder] WhatsApp credentials missing')
             return { success: false, error: 'WhatsApp API credentials not configured' }
         }
 
-        // ── 2. CONVERSATION HISTORY ───────────────────────────────
-        const { data: historyRows } = await supabaseAdmin
-            .from('whatsapp_messages')
-            .select('content_text, event_type')
-            .or(`from_number.eq.${cleanFrom},to_number.eq.${cleanFrom}`)
-            .order('received_at', { ascending: true })
-            .limit(MAX_HISTORY * 2) // Extra fetch, filter karenge
+        const history = await fetchConversationHistory(cleanFrom)
+        const systemPrompt = buildSystemPrompt(phoneConfig.systemPrompt)
 
-        const history = (historyRows ?? [])
-            .filter(m =>
-                typeof m.content_text === 'string' &&
-                m.content_text.trim().length > 0 &&
-                (m.event_type === 'MoMessage' || m.event_type === 'MtMessage')
-            )
-            .map(m => ({
-                role: m.event_type === 'MoMessage' ? 'user' as const : 'assistant' as const,
-                content: truncate(safeString(m.content_text), 500), // Each message truncate
-            }))
-            .slice(-MAX_HISTORY) // Last N only
+        const reply = await generateLlmReply({ systemPrompt, history, userText: safeUserText })
 
-        // ── 5. LLM FALLBACK (For general chat) ────────────────────
-        const baseRules = `You are ZARA, a premium AI assistant for business and life.
-- Reply like a professional executive assistant — smart, efficient, polite.
-- Use a mix of English and Hindi (Hinglish) as per the user's vibe.
-- Keep replies VERY SHORT — 1 to 2 lines max.
-- When someone says "done", "ok", or "thanks", reply with a warm professional closing like "Great! Let me know if you need anything else. 😊" or "Noted. Aapki help karke khushi hui! ✅"`.trim()
-
-        const systemPrompt = systemPromptBase
-            ? `${systemPromptBase}\n\n${baseRules}`
-            : baseRules
-
-        const messages = [
-            { role: 'system' as const, content: systemPrompt },
-            ...history,
-            { role: 'user' as const, content: safeUserText },
-        ]
-
-        // ── 5. LLM CALL ───────────────────────────────────────────
-        const completion = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
-            messages,
-            temperature: 0.3,       // Consistent but not robotic
-            max_tokens: MAX_REPLY_TOKENS,
-        })
-
-        const reply = completion.choices[0]?.message?.content?.trim()
-
-        // ── GUARDRAIL 5: Empty AI response ────────────────────────
-        if (!reply || reply.length < 2) {
+        // Guard: non-empty LLM response
+        if (!reply) {
             console.warn('[autoResponder] LLM returned empty response')
             return { success: false, error: 'AI returned empty response' }
         }
 
-        // ── GUARDRAIL 6: Forbidden content filter ─────────────────
-        const forbidden = /knowledge base|training data|I was trained|my dataset|as an AI language model/i
-        const cleanReply = reply.replace(forbidden, 'available information')
-
-        // ── 6. SEND WHATSAPP ──────────────────────────────────────
         const sendResult = await sendWhatsAppMessage(
             cleanFrom,
-            cleanReply,
-            auth_token,
-            origin
+            reply,
+            phoneConfig.authToken,
+            phoneConfig.origin
         )
 
         if (!sendResult.success) {
             console.error('[autoResponder] WhatsApp send failed:', sendResult.error)
-            return { success: false, response: cleanReply, sent: false, error: 'WhatsApp send failed' }
+            return { success: false, response: reply, sent: false, error: 'WhatsApp send failed' }
         }
 
-        // ── 7. SAVE BOT MESSAGE ───────────────────────────────────
         const botMessageId = `auto_${messageId}_${Date.now()}`
 
-        const { error: insertErr } = await supabaseAdmin
-            .from('whatsapp_messages')
-            .insert({
-                message_id: botMessageId,
-                channel: 'whatsapp',
-                from_number: cleanTo,
-                to_number: cleanFrom,
-                received_at: new Date().toISOString(),
-                content_type: 'text',
-                content_text: cleanReply,
-                sender_name: '11za Assistant',
-                event_type: 'MtMessage',
-                is_in_24_window: true,
-                raw_payload: { 
-                    source: 'auto_responder', 
-                    bot_response: true, 
-                    original_id: messageId 
-                },
-            })
+        await persistBotMessage({
+            botMessageId,
+            fromNumber: cleanTo,
+            toNumber: cleanFrom,
+            replyText: reply,
+            originalMessageId: messageId,
+        })
 
-        if (insertErr) {
-            // Message gaya — log karo but fail mat karo
-            console.warn('[autoResponder] Bot message save failed:', insertErr)
-        }
-
-        // ── 8. MARK ORIGINAL AS RESPONDED ────────────────────────
-        await supabaseAdmin
-            .from('whatsapp_messages')
-            .update({
-                is_responded: true,
-                response_sent_at: new Date().toISOString(),
-            })
-            .eq('message_id', messageId)
+        await markMessageAsResponded(messageId)
 
         console.log('[autoResponder] Response sent successfully')
 
-        return { success: true, response: cleanReply, sent: true }
-
-    } catch (err: any) {
-        // ── GUARDRAIL 7: Groq rate limit ──────────────────────────
-        if (err?.status === 429) {
+        return { success: true, response: reply, sent: true }
+    } catch (err: unknown) {
+        // Guard: Groq rate limit — surface a user-friendly error
+        if (typeof err === 'object' && err !== null && (err as { status?: number }).status === 429) {
             console.warn('[autoResponder] Groq rate limit hit')
             return { success: false, error: 'AI service busy — please try again in a moment' }
         }
@@ -249,7 +322,7 @@ export async function generateAutoResponse(
         console.error('[autoResponder] Unexpected error:', err)
         return {
             success: false,
-            error: err instanceof Error ? err.message : 'Unknown error'
+            error: err instanceof Error ? err.message : 'Unknown error',
         }
     }
 }
