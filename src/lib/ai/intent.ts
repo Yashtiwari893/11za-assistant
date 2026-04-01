@@ -70,7 +70,11 @@ ADD_TASK:
 - "todo: call bank, pay bill, buy groceries"
 - "office list mein report likhna add karo"
 - "create shopping list with eggs, bread, butter"
-- "Create grocery List for Wedding - Turmeric Powder, Masala, Oil, Paneer, Veggies" ← THIS IS ADD_TASK NOT DOCUMENT
+- "Create grocery List for Wedding - Turmeric Powder, Masala, Oil, Paneer, Veggies"
+- "Sale list mein 2 pack aur 1 kg add karo" ← Hinglish Order
+- "Sale list mein 2 pack hai hi nahi" ← Implied Addition
+- "List me Milk bhi dal dena" ← "dal dena" = Add
+- "Task list update karo: check email, reply to boss"
 
 LIST_TASKS:
 - "meri grocery list dikhao"
