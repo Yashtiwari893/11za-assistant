@@ -1,21 +1,19 @@
 // src/lib/features/reminder.ts
-// Reminder CRUD — 5 Guardrails ke saath bulletproof version
+// Reminder CRUD — Production-grade with guardrails
 
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { parseDateTime } from '@/lib/ai/dateParser'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import {
   reminderSet, reminderList, reminderSnoozed, errorMessage,
-  type Language
 } from '@/lib/whatsapp/templates'
+import type { Language } from '@/types'
+import { APP } from '@/config'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = getSupabaseClient()
 
 // ─── TITLE CLEANER ────────────────────────────────────────────
-// Title se time/date words hata deta hai
+
 function cleanReminderTitle(raw: string): string {
   const cleaned = raw
     .replace(/\b(remind|reminder|yaad|dilana|dilao|set|karo|please|bhai|yaar)\b/gi, '')
@@ -24,17 +22,17 @@ function cleanReminderTitle(raw: string): string {
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\b(somwar|mangalwar|budhwar|guruwar|shukrawar|shaniwar|raviwar)\b/gi, '')
     .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/gi, '')
-    .replace(/\b\d{1,2}:\d{2}\b/g, '')   // "11:30" hata do
-    .replace(/\b\d{1,2}\s*bje\b/gi, '')  // "11 bje" hata do
-    .replace(/\b\d{1,2}\s*baje\b/gi, '') // "11 baje" hata do
+    .replace(/\b\d{1,2}:\d{2}\b/g, '')
+    .replace(/\b\d{1,2}\s*bje\b/gi, '')
+    .replace(/\b\d{1,2}\s*baje\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
 
-  // Agar cleaning ke baad kuch nahi bacha toh original return karo
   return cleaned.length > 2 ? cleaned : raw.trim()
 }
 
 // ─── SET REMINDER ─────────────────────────────────────────────
+
 export async function handleSetReminder(params: {
   userId: string
   phone: string
@@ -42,15 +40,13 @@ export async function handleSetReminder(params: {
   message: string
   dateTimeText?: string
   reminderTitle?: string
-  prefix?: string // Support for abuse warning
+  prefix?: string
 }) {
   const { userId, phone, language, message, dateTimeText, reminderTitle, prefix = '' } = params
 
-  // Parse natural language date/time
   const textToParse = dateTimeText ?? message
   const parsed = await parseDateTime(textToParse)
 
-  // ── GUARDRAIL: Date parse hi nahi hua ─────────────────────
   if (!parsed || !parsed.date && !parsed.isRecurring) {
     await sendWhatsAppMessage({
       to: phone,
@@ -61,11 +57,10 @@ export async function handleSetReminder(params: {
     return
   }
 
-  // ── GUARDRAIL 1: Past / Too close (Min 60s) check ──────────
+  // Guard: Past / Too close (Min 60s)
   if (parsed.date) {
     const diffMs = parsed.date.getTime() - Date.now()
-
-    if (diffMs < 60000) {
+    if (diffMs < APP.MIN_REMINDER_LEAD_TIME_MS) {
       await sendWhatsAppMessage({
         to: phone,
         message: prefix + (language === 'hi'
@@ -76,24 +71,23 @@ export async function handleSetReminder(params: {
     }
   }
 
-  // ── Title — extracted ya cleaned ──────────────────────────
   const rawTitle = reminderTitle ?? message
   const title = cleanReminderTitle(rawTitle)
 
-  // ── GUARDRAIL 3: Duplicate check ──────────────────────────
+  // Guard: Duplicate check
   if (parsed.date) {
     const { data: existing } = await supabase
       .from('reminders')
       .select('id, scheduled_at')
       .eq('user_id', userId)
       .eq('status', 'pending')
-      .ilike('title', `%${title.substring(0, 20)}%`)  // pehle 20 chars match karo
+      .ilike('title', `%${title.substring(0, 20)}%`)
       .gte('scheduled_at', new Date().toISOString())
       .limit(1)
 
     if (existing && existing.length > 0) {
       const existingTime = new Date(existing[0].scheduled_at).toLocaleString('en-IN', {
-        timeZone: 'Asia/Kolkata',
+        timeZone: APP.DEFAULT_TIMEZONE,
         dateStyle: 'medium',
         timeStyle: 'short'
       })
@@ -107,7 +101,7 @@ export async function handleSetReminder(params: {
     }
   }
 
-  // ── GUARDRAIL 4: Title too short ya empty ─────────────────
+  // Guard: Title too short
   if (!title || title.length < 2) {
     await sendWhatsAppMessage({
       to: phone,
@@ -118,9 +112,7 @@ export async function handleSetReminder(params: {
     return
   }
 
-  // ── Timezone Correction (IST to UTC) ─────────────────────
-  // User says "12:00 PM" (IST). AI parses as "12:00 PM" (UTC).
-  // We subtract 5.5 hours to make it "06:30 AM" (UTC), which is 12:00 PM IST.
+  // Timezone Correction (IST to UTC)
   let finalScheduledAt: string | null = null
   if (parsed.date) {
     const istOffset = 5.5 * 60 * 60 * 1000
@@ -128,7 +120,6 @@ export async function handleSetReminder(params: {
     finalScheduledAt = utcDate.toISOString()
   }
 
-  // ── Save to Supabase ───────────────────────────────────────
   const { error } = await supabase
     .from('reminders')
     .insert({
@@ -146,7 +137,6 @@ export async function handleSetReminder(params: {
     return
   }
 
-  // ── Confirm to user ────────────────────────────────────────
   await sendWhatsAppMessage({
     to: phone,
     message: prefix + reminderSet(title, parsed.humanReadable, language)
@@ -154,6 +144,7 @@ export async function handleSetReminder(params: {
 }
 
 // ─── LIST REMINDERS ───────────────────────────────────────────
+
 export async function handleListReminders(params: {
   userId: string
   phone: string
@@ -191,10 +182,9 @@ export async function handleListReminders(params: {
     recurrence: r.recurrence
   }))
 
-  // Format list
   const lines = reminders.map((r, i) => {
     const time = r.scheduledAt.toLocaleString('en-IN', {
-      timeZone: 'Asia/Kolkata',
+      timeZone: APP.DEFAULT_TIMEZONE,
       dateStyle: 'medium',
       timeStyle: 'short'
     })
@@ -207,6 +197,7 @@ export async function handleListReminders(params: {
 }
 
 // ─── SNOOZE REMINDER ──────────────────────────────────────────
+
 export async function handleSnoozeReminder(params: {
   reminderId?: string
   userId?: string
@@ -217,10 +208,8 @@ export async function handleSnoozeReminder(params: {
   prefix?: string
 }) {
   const { reminderId, userId, phone, language, minutes, customText, prefix = '' } = params
-
   let targetReminderId = reminderId
 
-  // No reminderId — most recent pending/sent reminder dhundo
   if (!targetReminderId && userId) {
     const { data: recent } = await supabase
       .from('reminders')
@@ -259,9 +248,8 @@ export async function handleSnoozeReminder(params: {
       })
       return
     }
-    // ── Snooze guard: Min 60s ──
     const diffMs = parsed.date.getTime() - Date.now()
-    if (diffMs < 60000) {
+    if (diffMs < APP.MIN_REMINDER_LEAD_TIME_MS) {
       await sendWhatsAppMessage({
         to: phone,
         message: prefix + (language === 'hi'
@@ -275,17 +263,13 @@ export async function handleSnoozeReminder(params: {
     newTime = new Date(Date.now() + 15 * 60 * 1000) // default 15 min
   }
 
-  // Update reminder
   await supabase
     .from('reminders')
-    .update({
-      scheduled_at: newTime.toISOString(),
-      status: 'pending'
-    })
+    .update({ scheduled_at: newTime.toISOString(), status: 'pending' })
     .eq('id', targetReminderId)
 
   const humanReadable = newTime.toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
+    timeZone: APP.DEFAULT_TIMEZONE,
     timeStyle: 'short',
     dateStyle: 'short'
   })
@@ -297,16 +281,16 @@ export async function handleSnoozeReminder(params: {
 }
 
 // ─── CANCEL REMINDER ──────────────────────────────────────────
+
 export async function handleCancelReminder(params: {
   userId: string
   phone: string
   language: Language
-  titleHint?: string   // user ne kaunsa cancel karna hai hint diya
+  titleHint?: string
   prefix?: string
 }) {
   const { userId, phone, language, titleHint, prefix = '' } = params
 
-  // Agar title hint hai toh match karke cancel karo
   if (titleHint) {
     const { data: found } = await supabase
       .from('reminders')
@@ -327,10 +311,7 @@ export async function handleCancelReminder(params: {
       return
     }
 
-    await supabase
-      .from('reminders')
-      .update({ status: 'cancelled' })
-      .eq('id', found.id)
+    await supabase.from('reminders').update({ status: 'cancelled' }).eq('id', found.id)
 
     await sendWhatsAppMessage({
       to: phone,
@@ -341,7 +322,6 @@ export async function handleCancelReminder(params: {
     return
   }
 
-  // No hint — most recent cancel karo
   const { data: recent } = await supabase
     .from('reminders')
     .select('id, title')
@@ -361,10 +341,7 @@ export async function handleCancelReminder(params: {
     return
   }
 
-  await supabase
-    .from('reminders')
-    .update({ status: 'cancelled' })
-    .eq('id', recent.id)
+  await supabase.from('reminders').update({ status: 'cancelled' }).eq('id', recent.id)
 
   await sendWhatsAppMessage({
     to: phone,
@@ -375,6 +352,7 @@ export async function handleCancelReminder(params: {
 }
 
 // ─── MARK DONE ────────────────────────────────────────────────
+
 export async function handleReminderDone(params: {
   reminderId: string
   phone: string
@@ -383,10 +361,7 @@ export async function handleReminderDone(params: {
 }) {
   const { reminderId, phone, language, prefix = '' } = params
 
-  await supabase
-    .from('reminders')
-    .update({ status: 'sent' })
-    .eq('id', reminderId)
+  await supabase.from('reminders').update({ status: 'sent' }).eq('id', reminderId)
 
   await sendWhatsAppMessage({
     to: phone,

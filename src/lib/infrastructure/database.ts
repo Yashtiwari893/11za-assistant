@@ -1,11 +1,14 @@
 /**
  * Production-Grade Database Utilities
- * Connection pooling, query optimization, caching, transactions
+ * Singleton client, query caching, batch operations, soft deletes
  */
 
-import { createClient } from '@supabase/supabase-js'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
+import { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } from '@/config'
 import { logger } from './logger'
 import { retryWithExponentialBackoff } from './errorHandler'
+
+// ─── Types ────────────────────────────────────────────────────
 
 interface QueryStats {
   queryName: string
@@ -19,69 +22,44 @@ interface CacheEntry<T> {
   expiresAt: number
 }
 
-/**
- * Singleton Supabase client with connection pooling
- */
-let supabaseInstance: ReturnType<typeof createClient> | null = null
+// ─── Singleton Supabase Admin Client ──────────────────────────
+// All server-side code MUST use this. Never create a new client.
 
-export function getSupabaseClient() {
+let supabaseInstance: SupabaseClient | null = null
+
+export function getSupabaseClient(): SupabaseClient {
   if (!supabaseInstance) {
-    supabaseInstance = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        auth: {
-          persistSession: false,
-        },
-        db: {
-          // Connection pooling settings
-          schema: 'public',
-        },
-        // Global request timeout
-        global: {
-          timeout: 10000,
-        },
-      }
-    )
+    supabaseInstance = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false },
+      db: { schema: 'public' },
+    })
   }
-
   return supabaseInstance
 }
 
-/**
- * Query result cache with TTL
- */
+// ─── Query Cache with TTL ─────────────────────────────────────
+
 class QueryCache {
-  private cache: Map<string, CacheEntry<any>> = new Map()
+  private cache: Map<string, CacheEntry<unknown>> = new Map()
   private stats: Map<string, QueryStats> = new Map()
 
   get<T>(key: string): T | null {
     const entry = this.cache.get(key)
-
-    if (!entry) {
-      return null
-    }
-
+    if (!entry) return null
     if (entry.expiresAt < Date.now()) {
       this.cache.delete(key)
       return null
     }
-
     return entry.data as T
   }
 
-  set<T>(key: string, data: T, ttlMs: number = 60000): void {
-    this.cache.set(key, {
-      data,
-      expiresAt: Date.now() + ttlMs,
-    })
+  set<T>(key: string, data: T, ttlMs: number = 60_000): void {
+    this.cache.set(key, { data, expiresAt: Date.now() + ttlMs })
   }
 
   invalidate(pattern: string): void {
     for (const key of this.cache.keys()) {
-      if (key.includes(pattern)) {
-        this.cache.delete(key)
-      }
+      if (key.includes(pattern)) this.cache.delete(key)
     }
   }
 
@@ -89,150 +67,111 @@ class QueryCache {
     this.cache.clear()
   }
 
-  recordQuery(name: string, duration: number, rowsAffected: number = 0, cached: boolean = false): void {
-    this.stats.set(name, {
-      queryName: name,
-      duration,
-      rowsAffected,
-      cached,
-    })
+  recordQuery(name: string, duration: number, rowsAffected = 0, cached = false): void {
+    this.stats.set(name, { queryName: name, duration, rowsAffected, cached })
   }
 
   getStats(): Record<string, QueryStats> {
-    const result: Record<string, QueryStats> = {}
-    for (const [key, value] of this.stats.entries()) {
-      result[key] = value
-    }
-    return result
+    return Object.fromEntries(this.stats.entries())
   }
 }
 
 export const queryCache = new QueryCache()
 
-/**
- * Optimized user fetcher (prevents N+1 query)
- */
+// ─── Optimized Queries ────────────────────────────────────────
+
 export async function fetchUser(userId: string) {
   const cacheKey = `user:${userId}`
-  let user = queryCache.get<any>(cacheKey)
-
-  if (user) {
+  const cached = queryCache.get<Record<string, unknown>>(cacheKey)
+  if (cached) {
     logger.debug('User fetched from cache', { userId })
-    return user
+    return cached
   }
 
-  const startTime = Date.now()
+  const start = Date.now()
   const supabase = getSupabaseClient()
 
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, phone, name, language, onboarded, created_at')
-      .eq('id', userId)
-      .single()
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, phone, name, language, onboarded, created_at')
+    .eq('id', userId)
+    .single()
 
-    if (error) throw error
-
-    if (data) {
-      queryCache.set(cacheKey, data, 300000) // 5 min cache
-      logger.debug('User query executed', {
-        userId,
-        duration: Date.now() - startTime,
-      })
-    }
-
-    return data
-  } catch (error) {
-    logger.error('Failed to fetch user', { userId }, error as Error)
+  if (error) {
+    logger.error('Failed to fetch user', { userId }, error as unknown as Error)
     throw error
   }
+
+  if (data) {
+    queryCache.set(cacheKey, data, 300_000) // 5 min cache
+    logger.debug('User query executed', { userId, duration: Date.now() - start })
+  }
+
+  return data
 }
 
-/**
- * Batch fetch users (prevents N+1)
- */
 export async function fetchUsers(userIds: string[]) {
   if (userIds.length === 0) return []
 
   const supabase = getSupabaseClient()
-  const startTime = Date.now()
+  const start = Date.now()
 
-  try {
-    const { data, error } = await supabase
-      .from('users')
-      .select('id, phone, name, language, onboarded, created_at')
-      .in('id', userIds)
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, phone, name, language, onboarded, created_at')
+    .in('id', userIds)
 
-    if (error) throw error
-
-    logger.debug('Batch user fetch', {
-      count: data?.length || 0,
-      duration: Date.now() - startTime,
-    })
-
-    // Cache each result
-    data?.forEach(user => {
-      queryCache.set(`user:${user.id}`, user, 300000)
-    })
-
-    return data || []
-  } catch (error) {
-    logger.error('Failed to batch fetch users', { userCount: userIds.length }, error as Error)
+  if (error) {
+    logger.error('Failed to batch fetch users', { userCount: userIds.length }, error as unknown as Error)
     throw error
   }
+
+  logger.debug('Batch user fetch', { count: data?.length || 0, duration: Date.now() - start })
+
+  data?.forEach((user: Record<string, unknown>) => {
+    queryCache.set(`user:${user.id}`, user, 300_000)
+  })
+
+  return data || []
 }
 
-/**
- * Optimized reminder fetcher with pagination
- */
 export async function fetchReminders(
   userId: string,
   statuses: string[] = ['pending'],
   limit: number = 20
 ) {
   const supabase = getSupabaseClient()
-  const startTime = Date.now()
+  const start = Date.now()
 
-  try {
-    let query = supabase
-      .from('reminders')
-      .select('id, title, scheduled_at, status, recurrence, user_id', { count: 'exact' })
-      .eq('user_id', userId)
+  let query = supabase
+    .from('reminders')
+    .select('id, title, scheduled_at, status, recurrence, user_id', { count: 'exact' })
+    .eq('user_id', userId)
 
-    if (statuses.length > 0) {
-      query = query.in('status', statuses)
-    }
+  if (statuses.length > 0) {
+    query = query.in('status', statuses)
+  }
 
-    const { data, count, error } = await query
-      .order('scheduled_at', { ascending: true })
-      .limit(limit)
+  const { data, count, error } = await query
+    .order('scheduled_at', { ascending: true })
+    .limit(limit)
 
-    if (error) throw error
-
-    logger.debug('Reminders fetched', {
-      userId,
-      count,
-      duration: Date.now() - startTime,
-    })
-
-    return { data: data || [], totalCount: count || 0 }
-  } catch (error) {
-    logger.error('Failed to fetch reminders', { userId }, error as Error)
+  if (error) {
+    logger.error('Failed to fetch reminders', { userId }, error as unknown as Error)
     throw error
   }
+
+  logger.debug('Reminders fetched', { userId, count, duration: Date.now() - start })
+  return { data: data || [], totalCount: count || 0 }
 }
 
-/**
- * Transaction wrapper for atomic operations
- */
+// ─── Transaction Wrapper ──────────────────────────────────────
+
 export async function transaction<T>(
-  fn: (supabase: ReturnType<typeof getSupabaseClient>) => Promise<T>
+  fn: (supabase: SupabaseClient) => Promise<T>
 ): Promise<T> {
   const supabase = getSupabaseClient()
-
   try {
-    // Note: Real transactional support requires Supabase's PGSQL procedures
-    // This is a simple wrapper - for complex transactions, use stored procedures
     const result = await fn(supabase)
     logger.debug('Transaction completed successfully')
     return result
@@ -242,10 +181,9 @@ export async function transaction<T>(
   }
 }
 
-/**
- * Bulk insert with chunking (prevents too-large requests)
- */
-export async function bulkInsert<T>(
+// ─── Bulk Insert with Chunking ────────────────────────────────
+
+export async function bulkInsert<T extends Record<string, unknown>>(
   tableName: string,
   records: T[],
   chunkSize: number = 1000
@@ -255,33 +193,23 @@ export async function bulkInsert<T>(
   for (let i = 0; i < records.length; i += chunkSize) {
     const chunk = records.slice(i, i + chunkSize)
 
-    try {
-      await retryWithExponentialBackoff(async () => {
-        const { error } = await supabase.from(tableName).insert(chunk)
-        if (error) throw error
-      })
+    await retryWithExponentialBackoff(async () => {
+      const { error } = await supabase.from(tableName).insert(chunk)
+      if (error) throw error
+    })
 
-      logger.debug('Bulk insert chunk', {
-        table: tableName,
-        chunkSize: chunk.length,
-        totalProgress: `${Math.min(i + chunkSize, records.length)}/${records.length}`,
-      })
-    } catch (error) {
-      logger.error('Bulk insert failed', {
-        table: tableName,
-        chunkIndex: i / chunkSize,
-      }, error as Error)
-      throw error
-    }
+    logger.debug('Bulk insert chunk', {
+      table: tableName,
+      chunkSize: chunk.length,
+      totalProgress: `${Math.min(i + chunkSize, records.length)}/${records.length}`,
+    })
   }
 
-  // Invalidate cache
   queryCache.invalidate(tableName)
 }
 
-/**
- * Safe delete with soft-delete support
- */
+// ─── Soft Delete ──────────────────────────────────────────────
+
 export async function softDelete(
   tableName: string,
   id: string,
@@ -289,27 +217,17 @@ export async function softDelete(
 ): Promise<void> {
   const supabase = getSupabaseClient()
 
-  try {
-    if (useSoftDelete) {
-      const { error } = await supabase
-        .from(tableName)
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('id', id)
-
-      if (error) throw error
-    } else {
-      const { error } = await supabase
-        .from(tableName)
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
-    }
-
-    queryCache.invalidate(tableName)
-    logger.debug('Record soft-deleted', { table: tableName, id })
-  } catch (error) {
-    logger.error('Soft delete failed', { table: tableName, id }, error as Error)
-    throw error
+  if (useSoftDelete) {
+    const { error } = await supabase
+      .from(tableName)
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id)
+    if (error) throw error
+  } else {
+    const { error } = await supabase.from(tableName).delete().eq('id', id)
+    if (error) throw error
   }
+
+  queryCache.invalidate(tableName)
+  logger.debug('Record deleted', { table: tableName, id, soft: useSoftDelete })
 }

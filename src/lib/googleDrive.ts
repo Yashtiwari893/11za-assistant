@@ -1,16 +1,14 @@
 // src/lib/googleDrive.ts
 // Google Drive integration — upload, fetch, token refresh
 
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
+import { GOOGLE } from '@/config'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = getSupabaseClient()
 
-const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
-const GOOGLE_DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files'
-const GOOGLE_DRIVE_FILES_URL = 'https://www.googleapis.com/drive/v3/files'
+const GOOGLE_TOKEN_URL = GOOGLE.TOKEN_URL
+const GOOGLE_DRIVE_UPLOAD_URL = GOOGLE.DRIVE_UPLOAD_URL
+const GOOGLE_DRIVE_FILES_URL = GOOGLE.DRIVE_FILES_URL
 
 // ─── GET USER'S GOOGLE TOKENS ─────────────────────────────────
 export async function getGoogleTokens(userId: string) {
@@ -35,8 +33,8 @@ async function refreshAccessToken(userId: string, refreshToken: string): Promise
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: process.env.GOOGLE_CLIENT_ID!,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        client_id: GOOGLE.CLIENT_ID,
+        client_secret: GOOGLE.CLIENT_SECRET,
         refresh_token: refreshToken,
         grant_type: 'refresh_token',
       })

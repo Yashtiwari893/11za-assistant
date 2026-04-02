@@ -1,14 +1,12 @@
 // src/lib/features/onboarding.ts
-// User Onboarding — Bulletproof version with guardrails
+// User Onboarding — Production-grade with guardrails
 
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
-import { type Language } from '@/lib/whatsapp/templates'
+import type { Language } from '@/types'
+import { detectLanguageSync } from '@/lib/ai/language'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = getSupabaseClient()
 
 // ─── GET OR CREATE USER ───────────────────────────────────────
 export async function getOrCreateUser(phone: string, name?: string | null) {
@@ -21,34 +19,22 @@ export async function getOrCreateUser(phone: string, name?: string | null) {
   // Phone normalize — leading + ensure, spaces/dashes hata do
   const normalizedPhone = phone.replace(/[\s\-().]/g, '')
 
-  // ── Try to find existing user ──────────────────────────────
-  const { data: existing } = await supabase
+  const { data: existingUser, error: checkError } = await supabase
     .from('users')
     .select('*')
     .eq('phone', normalizedPhone)
     .single()
 
-  if (existing) {
-    // ── Name update karo agar pehle nahi tha ─────────────────
-    if (name && !existing.name) {
-      await supabase
-        .from('users')
-        .update({ name: name.trim() })
-        .eq('id', existing.id)
-      existing.name = name.trim()
-    }
-    return existing
-  }
+  if (existingUser) return existingUser
 
-  // ── New user — create with defaults ───────────────────────
   const { data: newUser, error } = await supabase
     .from('users')
-    .insert({
-      phone: normalizedPhone,
-      name: name?.trim() ?? null,
-      onboarded: false,
-      language: 'en',
-    })
+    .insert([{ 
+      phone: normalizedPhone, 
+      name: name || null, 
+      language: 'en', 
+      onboarded: false 
+    }])
     .select()
     .single()
 
@@ -58,16 +44,6 @@ export async function getOrCreateUser(phone: string, name?: string | null) {
   }
 
   return newUser
-}
-
-// ─── DETECT LANGUAGE FROM MESSAGE ─────────────────────────────
-function detectLanguageFromMessage(message: string): Language | null {
-  const hindiWords = /\b(karo|karna|bhai|aaj|kal|mera|meri|hai|hain|nahi|aur|yaad|dilana|list|add)\b/i
-  const gujaratiWords = /\b(chhe|nathi|karvu|mari|tamaru|ane|ke|ma|thi|pan|chhu)\b/i
-
-  if (gujaratiWords.test(message)) return 'gu'
-  if (hindiWords.test(message)) return 'hi'
-  return null
 }
 
 // ─── ONBOARDING FLOW ──────────────────────────────────────────
@@ -82,8 +58,7 @@ export async function handleOnboarding(
   if (user.onboarded) return
 
   // ── Auto-detect language from first message ────────────────
-  const detectedLang = detectLanguageFromMessage(incomingMessage)
-  const lang: Language = detectedLang ?? 'en'
+  const lang = detectLanguageSync(incomingMessage)
 
   // ── Mark as onboarded + save detected language ─────────────
   const { error: updateErr } = await supabase

@@ -1,7 +1,8 @@
 // src/lib/whatsapp/templates.ts
 // WhatsApp Message Templates — Clean, correct, multilingual
 
-export type Language = 'en' | 'hi' | 'gu'
+import type { Language } from '@/types'
+export type { Language }
 
 // ─── ONBOARDING ───────────────────────────────────────────────
 export function welcomeMessage(name?: string | null): string {

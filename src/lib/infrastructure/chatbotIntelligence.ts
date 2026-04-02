@@ -3,7 +3,8 @@
  * Context awareness, conversation memory, personality, fallback chains
  */
 
-import Groq from 'groq-sdk'
+import { getGroqClient } from '@/lib/ai/clients'
+import { AI_MODELS } from '@/config'
 import { createError, retryWithExponentialBackoff } from './errorHandler'
 import { logger } from './logger'
 
@@ -30,8 +31,6 @@ interface ChatResponse {
   suggestedActions?: string[]
   tone: 'helpful' | 'empathetic' | 'humor' | 'formal'
 }
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
 
 /**
  * Build personalized system prompt based on user profile
@@ -116,7 +115,7 @@ export async function advancedChat(
     // Primary: Fast model for quick response
     const response = await retryWithExponentialBackoff(
       async () => {
-        return await groq.chat.completions.create({
+        return await getGroqClient().chat.completions.create({
           model: 'llama-3.1-8b-instant', // Fast
           messages: messages.map(m => ({
             role: m.role,
@@ -163,7 +162,7 @@ export async function advancedChat(
 
     // Fallback 1: Larger, slower model (better quality but slower)
     try {
-      const fallbackResponse = await groq.chat.completions.create({
+      const fallbackResponse = await getGroqClient().chat.completions.create({
         model: 'llama-3.3-70b-versatile', // More capable but slower
         messages: messages.map(m => ({
           role: m.role,
@@ -240,7 +239,7 @@ export async function analyzeSentiment(message: string): Promise<{
   confidence: number
 }> {
   try {
-    const response = await groq.chat.completions.create({
+    const response = await getGroqClient().chat.completions.create({
       model: 'llama-3.1-8b-instant',
       messages: [
         {
@@ -262,7 +261,7 @@ export async function analyzeSentiment(message: string): Promise<{
     const parsed = JSON.parse(content)
     return parsed
   } catch (error) {
-    logger.warn('Sentiment analysis failed', {}, error as Error)
+    logger.warn('Sentiment analysis failed', { error: (error as Error).message })
     return {
       sentiment: 'neutral',
       emotion: 'unknown',
@@ -318,7 +317,7 @@ export async function extractStructuredData(
       .map(([key, desc]) => `${key}: ${desc}`)
       .join('\n')
 
-    const response = await groq.chat.completions.create({
+    const response = await getGroqClient().chat.completions.create({
       model: 'llama-3.1-8b-instant',
       messages: [
         {
@@ -339,7 +338,7 @@ export async function extractStructuredData(
 
     return JSON.parse(content)
   } catch (error) {
-    logger.debug('Structured data extraction skipped', {}, error as Error)
+    logger.debug('Structured data extraction skipped', { error: (error as Error).message })
     return {}
   }
 }

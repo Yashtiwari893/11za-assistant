@@ -1,14 +1,12 @@
 // src/lib/features/briefing.ts
-// Morning Briefing — Bulletproof version with guardrails
+// Morning Briefing — Production-grade with guardrails
 
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
-import { morningBriefing, type Language } from '@/lib/whatsapp/templates'
+import { morningBriefing } from '@/lib/whatsapp/templates'
+import type { Language } from '@/types'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = getSupabaseClient()
 
 // IST timezone helper
 const IST = 'Asia/Kolkata'
@@ -88,7 +86,7 @@ export async function sendBriefingToUser(user: {
   // Add pending tasks (top 3)
   if (tasks && tasks.length > 0) {
     const taskLines = tasks.slice(0, 3).map(t => {
-      const listName = (t.lists as any)?.name ?? 'general'
+      const listName = (t.lists as unknown as { name: string } | null)?.name ?? 'general'
       return `  • ${t.content} _(${listName})_`
     }).join('\n')
 

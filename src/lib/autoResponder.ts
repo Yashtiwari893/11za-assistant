@@ -1,20 +1,14 @@
 // src/lib/autoResponder.ts
-// AI Auto-Responder — RAG/general chat fallback, invoked after SAM feature handlers.
+// AI Auto-Responder — RAG/general chat fallback, invoked after feature handlers.
 
-import { createClient } from '@supabase/supabase-js'
-import { sendWhatsAppMessage } from './whatsappSender'
-import Groq from 'groq-sdk'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
+import { getGroqClient } from '@/lib/ai/clients'
+import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
+import { AI_MODELS, APP, WHATSAPP_AUTH_TOKEN, WHATSAPP_ORIGIN } from '@/config'
+import type { AutoResponseResult } from '@/types'
 
 // ─── Constants ────────────────────────────────────────────────
 
-const CONVERSATION_HISTORY_LIMIT = 10
-const MAX_REPLY_TOKENS = 300
-const MAX_MESSAGE_LENGTH = 4000    // Groq context safety ceiling
-const MAX_PER_MESSAGE_LENGTH = 500 // Per-history-entry truncation
-const RECENT_OUTGOING_WINDOW_MS = 10_000
-const MIN_PHONE_LENGTH = 10
-const BOT_SENDER_NAME = '11za Assistant'
-const GROQ_MODEL = 'llama-3.3-70b-versatile'
 const GROQ_TEMPERATURE = 0.3
 
 const ZARA_BASE_RULES = `
@@ -45,23 +39,11 @@ const FORBIDDEN_AI_PHRASE_PATTERN =
 
 // ─── Clients ──────────────────────────────────────────────────
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
+const supabase = getSupabaseClient()
 
 // ─── Types ────────────────────────────────────────────────────
 
-export interface AutoResponseResult {
-  success: boolean
-  response?: string
-  sent?: boolean
-  error?: string
-  noDocuments?: boolean
-  processed_by?: string
-}
+export type { AutoResponseResult }
 
 interface PhoneConfig {
   systemPrompt: string
@@ -126,7 +108,7 @@ async function hasAlreadyResponded(messageId: string): Promise<boolean> {
 }
 
 async function hasRecentOutgoingMessage(toNumber: string): Promise<boolean> {
-  const windowStart = new Date(Date.now() - RECENT_OUTGOING_WINDOW_MS).toISOString()
+  const windowStart = new Date(Date.now() - APP.RECENT_OUTGOING_WINDOW_MS).toISOString()
 
   const { data } = await supabase
     .from('whatsapp_messages')
@@ -142,8 +124,8 @@ async function hasRecentOutgoingMessage(toNumber: string): Promise<boolean> {
 async function fetchPhoneConfig(phoneNumber: string): Promise<PhoneConfig> {
   const defaultConfig: PhoneConfig = {
     systemPrompt: '',
-    authToken: process.env.WHATSAPP_AUTH_TOKEN ?? '',
-    origin: process.env.WHATSAPP_ORIGIN ?? '',
+    authToken: WHATSAPP_AUTH_TOKEN,
+    origin: WHATSAPP_ORIGIN,
   }
 
   const { data } = await supabase
@@ -171,7 +153,7 @@ async function fetchConversationHistory(fromNumber: string): Promise<HistoryMess
     .select('content_text, event_type')
     .or(`from_number.eq.${fromNumber},to_number.eq.${fromNumber}`)
     .order('received_at', { ascending: true })
-    .limit(CONVERSATION_HISTORY_LIMIT * 2) // Over-fetch, then trim to last N
+    .limit(APP.CONVERSATION_HISTORY_LIMIT * 2) // Over-fetch, then trim to last N
 
   return (data ?? [])
     .filter(
@@ -182,9 +164,9 @@ async function fetchConversationHistory(fromNumber: string): Promise<HistoryMess
     )
     .map((row) => ({
       role: row.event_type === 'MoMessage' ? ('user' as const) : ('assistant' as const),
-      content: truncate(safeString(row.content_text), MAX_PER_MESSAGE_LENGTH),
+      content: truncate(safeString(row.content_text), APP.MAX_PER_MESSAGE_LENGTH),
     }))
-    .slice(-CONVERSATION_HISTORY_LIMIT)
+    .slice(-APP.CONVERSATION_HISTORY_LIMIT)
 }
 
 async function persistBotMessage(params: PersistBotMessageParams): Promise<void> {
@@ -198,7 +180,7 @@ async function persistBotMessage(params: PersistBotMessageParams): Promise<void>
     received_at: new Date().toISOString(),
     content_type: 'text',
     content_text: replyText,
-    sender_name: BOT_SENDER_NAME,
+    sender_name: APP.BOT_SENDER_NAME,
     event_type: 'MtMessage',
     is_in_24_window: true,
     raw_payload: {
@@ -233,15 +215,15 @@ async function markMessageAsResponded(messageId: string): Promise<void> {
 async function generateLlmReply(params: GenerateLlmReplyParams): Promise<string | null> {
   const { systemPrompt, history, userText } = params
 
-  const completion = await groq.chat.completions.create({
-    model: GROQ_MODEL,
+  const completion = await getGroqClient().chat.completions.create({
+    model: AI_MODELS.AUTO_RESPONDER,
     messages: [
       { role: 'system', content: systemPrompt },
       ...history,
       { role: 'user', content: userText },
     ],
     temperature: GROQ_TEMPERATURE,
-    max_tokens: MAX_REPLY_TOKENS,
+    max_tokens: APP.MAX_REPLY_TOKENS,
   })
 
   const raw = completion.choices[0]?.message?.content?.trim()
@@ -270,7 +252,7 @@ export async function generateAutoResponse(
     const cleanTo = normalizePhone(toNumber)
 
     // Guard: valid phone number format
-    if (cleanFrom.length < MIN_PHONE_LENGTH || cleanTo.length < MIN_PHONE_LENGTH) {
+    if (cleanFrom.length < APP.MIN_PHONE_LENGTH || cleanTo.length < APP.MIN_PHONE_LENGTH) {
       return { success: false, error: 'Invalid phone numbers' }
     }
 
@@ -292,7 +274,7 @@ export async function generateAutoResponse(
       return { success: false, error: 'Empty message — nothing to respond to' }
     }
 
-    const safeUserText = truncate(userText, MAX_MESSAGE_LENGTH)
+    const safeUserText = truncate(userText, APP.MAX_MESSAGE_LENGTH)
 
     console.log('[autoResponder] From:', cleanFrom, '| To:', cleanTo)
 
@@ -316,12 +298,12 @@ export async function generateAutoResponse(
       return { success: false, error: 'AI returned empty response' }
     }
 
-    const sendResult = await sendWhatsAppMessage(
-      cleanFrom,
-      reply,
-      phoneConfig.authToken,
-      phoneConfig.origin
-    )
+    const sendResult = await sendWhatsAppMessage({
+      to: cleanFrom,
+      message: reply,
+      authToken: phoneConfig.authToken,
+      origin: phoneConfig.origin
+    })
 
     if (!sendResult.success) {
       console.error('[autoResponder] WhatsApp send failed:', sendResult.error)

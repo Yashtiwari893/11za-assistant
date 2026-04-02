@@ -1,16 +1,13 @@
 // src/lib/whatsappSender.ts
-// WhatsApp Message Sender — 11za.in API — Bulletproof version
+// WhatsApp Message Sender — 11za.in API — Production-grade
 
-const API_BASE = 'https://api.11za.in/apis'
-const SEND_MESSAGE_URL = `${API_BASE}/sendMessage/sendMessages`
-const SEND_MEDIA_URL = `${API_BASE}/sendMessage/sendMedia`
-const SEND_TEMPLATE_URL = `${API_BASE}/template/sendTemplate`
+import { WHATSAPP_API, APP } from '@/config'
 
-// Timeout — 11za API agar 10 sec mein jawab na de
-const REQUEST_TIMEOUT_MS = 10_000
-
-// Max message length — WhatsApp limit 4096 chars
-const MAX_MESSAGE_LENGTH = 4000
+const SEND_MESSAGE_URL = WHATSAPP_API.SEND_MESSAGE
+const SEND_MEDIA_URL = WHATSAPP_API.SEND_MEDIA
+const SEND_TEMPLATE_URL = WHATSAPP_API.SEND_TEMPLATE
+const REQUEST_TIMEOUT_MS = WHATSAPP_API.REQUEST_TIMEOUT_MS
+const MAX_MESSAGE_LENGTH = APP.MAX_MESSAGE_LENGTH
 
 // ─── TYPES ────────────────────────────────────────────────────
 export type SendMessageResult = {
@@ -127,17 +124,17 @@ export async function sendWhatsAppMessage(
         console.log('[whatsappSender] Sent successfully to:', phoneNumber)
         return { success: true, response: data }
 
-    } catch (err: any) {
-        // ── GUARDRAIL 6: Timeout ───────────────────────────────────
-        if (err?.name === 'AbortError') {
+    } catch (err: unknown) {
+        const error = err instanceof Error ? err : new Error('Unknown error')
+        if (error.name === 'AbortError') {
             console.error('[whatsappSender] Request timeout after', REQUEST_TIMEOUT_MS, 'ms')
             return { success: false, error: '11za API timeout — message may not have sent' }
         }
 
-        console.error('[whatsappSender] Unexpected error:', err?.message)
+        console.error('[whatsappSender] Unexpected error:', error.message)
         return {
             success: false,
-            error: err instanceof Error ? err.message : 'Unknown error'
+            error: error.message
         }
     }
 }
@@ -189,12 +186,13 @@ export async function sendWhatsAppMedia(
         console.log('[whatsappSender] Media sent to:', phoneNumber)
         return { success: true, response: data }
 
-    } catch (err: any) {
-        if (err?.name === 'AbortError') {
+    } catch (err: unknown) {
+        const error = err instanceof Error ? err : new Error('Unknown error')
+        if (error.name === 'AbortError') {
             return { success: false, error: '11za API timeout' }
         }
-        console.error('[whatsappSender] Media error:', err?.message)
-        return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+        console.error('[whatsappSender] Media error:', error.message)
+        return { success: false, error: error.message }
     }
 }
 
@@ -242,11 +240,12 @@ export async function sendWhatsAppTemplate(
 
         return { success: true, response: data }
 
-    } catch (err: any) {
-        if (err?.name === 'AbortError') {
+    } catch (err: unknown) {
+        const error = err instanceof Error ? err : new Error('Unknown error')
+        if (error.name === 'AbortError') {
             return { success: false, error: '11za API timeout' }
         }
-        console.error('[whatsappSender] Template error:', err?.message)
-        return { success: false, error: err instanceof Error ? err.message : 'Unknown error' }
+        console.error('[whatsappSender] Template error:', error.message)
+        return { success: false, error: error.message }
     }
 }

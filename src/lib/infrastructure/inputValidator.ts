@@ -81,12 +81,13 @@ export function validateString(
 export function validatePlainText(text: string | unknown, maxLength: number = 1000): string {
   const validated = validateString(text, 0, maxLength, 'Text')
 
-  // Remove control characters and dangerous patterns
   const cleaned = validated
-    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '') // Remove control chars
-    .replace(/<script[^>]*>.*?<\/script>/gi, '') // Remove scripts
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '') // Remove control codes
+    .replace(/<script[^>]*>.*?<\/script>/gi, '') // Remove script blocks
+    .replace(/<[^>]*>/g, '') // Remove all other HTML tags
     .replace(/javascript:/gi, '') // Remove javascript: protocol
     .replace(/on\w+\s*=/gi, '') // Remove event handlers
+    .replace(/\s+/g, ' ') // Collapse whitespace
     .trim()
 
   return cleaned

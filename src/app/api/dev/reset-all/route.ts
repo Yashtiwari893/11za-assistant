@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
+import { getSupabaseClient } from "@/lib/infrastructure/database"
 
 export const runtime = "nodejs"
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabaseAdmin = getSupabaseClient()
 
 export async function DELETE(req: NextRequest) {
   // SECURITY FIX: Production mein disabled

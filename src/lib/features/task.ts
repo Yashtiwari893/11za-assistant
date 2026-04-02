@@ -1,17 +1,14 @@
 // src/lib/features/task.ts
-// Tasks + Lists CRUD — Guardrails ke saath bulletproof version
+// Tasks + Lists CRUD — Production-grade with guardrails
 
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import {
   taskAdded, taskList, taskCompleted, errorMessage,
-  type Language
 } from '@/lib/whatsapp/templates'
+import type { Language } from '@/types'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = getSupabaseClient()
 
 // ─── CONTENT CLEANER ──────────────────────────────────────────
 // Task content se filler words hata do
@@ -432,7 +429,7 @@ export async function handleListAllLists(params: {
   }
 
   const listText = lists.map(l => {
-    const taskCount = (l.tasks as any)?.[0]?.count ?? 0
+    const taskCount = (l.tasks as Array<{ count: number }> | null)?.[0]?.count ?? 0
     return `• *${l.name}* — ${taskCount} item${taskCount !== 1 ? 's' : ''}`
   }).join('\n')
 

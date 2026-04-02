@@ -1,11 +1,9 @@
-// src/lib/ai/detectLanguage.ts
+// src/lib/language.ts
 // Language Detection — Fast local first, Groq fallback
-// Groq API call bachao — 90% cases local detection se handle ho jaate hain
 
-import Groq from 'groq-sdk'
-import type { Language } from '@/lib/whatsapp/templates'
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
+import { getGroqClient } from '@/lib/ai/clients'
+import { AI_MODELS } from '@/config'
+import type { Language } from '@/types'
 
 // ─── LOCAL DETECTION (fast, no API call) ──────────────────────
 // Common words se language detect karo — Groq se 100x faster
@@ -61,8 +59,8 @@ export async function detectLanguage(text: string): Promise<Language> {
 
     // ── Step 2: Groq fallback for ambiguous text ───────────────
     try {
-        const completion = await groq.chat.completions.create({
-            model: 'llama3-8b-8192',  // Smaller model — faster + cheaper
+        const completion = await getGroqClient().chat.completions.create({
+            model: AI_MODELS.LANGUAGE_DETECT,
             temperature: 0,
             max_tokens: 10,                 // Sirf language name chahiye
             messages: [
@@ -94,12 +92,13 @@ export async function detectLanguage(text: string): Promise<Language> {
 
         return 'en'  // Safe default
 
-    } catch (err: any) {
+    } catch (err: unknown) {
         // ── GUARDRAIL 4: Groq rate limit ────────────────────────
-        if (err?.status === 429) {
+        const error = err as { status?: number; message?: string }
+        if (error?.status === 429) {
             console.warn('[detectLanguage] Rate limited — defaulting to en')
         } else {
-            console.error('[detectLanguage] Groq failed:', err?.message)
+            console.error('[detectLanguage] Groq failed:', error?.message)
         }
         return 'en'  // Always safe fallback
     }

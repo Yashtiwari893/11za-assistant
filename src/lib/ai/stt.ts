@@ -1,17 +1,14 @@
 // src/lib/speechToText.ts
-// Voice Note → Text using Groq Whisper — Bulletproof version
+// Voice Note → Text using Groq Whisper — Production-grade
 
-import Groq from 'groq-sdk'
+import { getGroqClient } from '@/lib/ai/clients'
+import { AI_MODELS, APP, SUPPORTED_AUDIO_FORMATS } from '@/config'
 import fs from 'fs'
 import path from 'path'
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
-
 // Supported audio formats by Groq Whisper
-const SUPPORTED_FORMATS = ['ogg', 'mp3', 'mp4', 'wav', 'webm', 'm4a', 'flac']
-
-// Max file size Groq accepts — 25MB
-const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
+const SUPPORTED_FORMATS = [...SUPPORTED_AUDIO_FORMATS]
+const MAX_FILE_SIZE_BYTES = APP.MAX_STT_FILE_SIZE_BYTES
 
 export interface STTResult {
     text: string
@@ -74,17 +71,16 @@ export async function speechToText(audioUrl: string, authToken?: string): Promis
         console.log(`[STT] Audio saved: ${audioPath} (${(buffer.length / 1024).toFixed(1)} KB)`)
 
         // ── GUARDRAIL 5: Supported format check ───────────────────
-        if (!SUPPORTED_FORMATS.includes(ext)) {
+        if (!(SUPPORTED_FORMATS as readonly string[]).includes(ext)) {
             console.error(`[STT] Unsupported format: ${ext}`)
             cleanup(audioPath)
             return null
         }
 
         // ── Groq Whisper transcription ────────────────────────────
-        const transcription = await groq.audio.transcriptions.create({
+        const transcription = await getGroqClient().audio.transcriptions.create({
             file: fs.createReadStream(audioPath),
-            model: 'whisper-large-v3',
-            // response_format: 'verbose_json',  // language detect ke liye — but Groq mein abhi nahi
+            model: AI_MODELS.STT,
         })
 
         cleanup(audioPath)

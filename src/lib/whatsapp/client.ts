@@ -1,48 +1,44 @@
-import { sendWhatsAppMessage as legacySender } from '../whatsappSender'
-import { createClient } from '@supabase/supabase-js'
+import { sendWhatsAppMessage as legacySender } from './sender'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
+import type { SendMessageOptions, WhatsAppButton } from '@/types'
 
 // Use admin client to bypass RLS and securely fetch sensitive credentials
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
-export type WhatsAppButton = {
-  id: string
-  title: string
-}
-
-export type SendMessageOptions = {
-  to: string
-  message: string
-  from?: string // The bot's phone number
-  buttons?: WhatsAppButton[]
-  mediaUrl?: string
-  mediaType?: 'image' | 'document' | 'audio'
-}
+const supabaseAdmin = getSupabaseClient()
 
 /**
  * Modern WhatsApp Client wrapper for 11za
  * Handles credential lookup and advanced message types (buttons)
  */
 export async function sendWhatsAppMessage(options: SendMessageOptions) {
-  const { to, message, from, buttons, mediaUrl, mediaType } = options
+  const { 
+    to, 
+    message, 
+    from, 
+    buttons, 
+    mediaUrl, 
+    mediaType, 
+    authToken: explicitToken, 
+    origin: explicitOrigin 
+  } = options
 
-  // 1. Resolve credentials
-  let authToken = process.env.WHATSAPP_AUTH_TOKEN
-  let origin = process.env.WHATSAPP_ORIGIN
+  // 1. Resolve credentials (Priority: Explicit Override > DB Lookup > Env Var)
+  let authToken = explicitToken || process.env.WHATSAPP_AUTH_TOKEN
+  let origin = explicitOrigin || process.env.WHATSAPP_ORIGIN
 
-  // Try to find the specific bot number, or fallback to ANY available number if 'from' is omitted
-  let query = supabaseAdmin.from('phone_document_mapping').select('auth_token, origin');
-  if (from) {
-      query = query.eq('phone_number', from);
-  }
-  
-  const { data: mappings } = await query.limit(1)
+  // Only perform DB lookup if we don't have explicit credentials
+  if (!explicitToken || !explicitOrigin) {
+    // Try to find the specific bot number, or fallback to ANY available number if 'from' is omitted
+    let query = supabaseAdmin.from('phone_document_mapping').select('auth_token, origin');
+    if (from) {
+        query = query.eq('phone_number', from);
+    }
+    
+    const { data: mappings } = await query.limit(1)
 
-  if (mappings && mappings.length > 0) {
-    authToken = mappings[0].auth_token
-    origin = mappings[0].origin
+    if (mappings && mappings.length > 0) {
+      if (!explicitToken) authToken = mappings[0].auth_token
+      if (!explicitOrigin) origin = mappings[0].origin
+    }
   }
 
   if (!authToken || !origin) {

@@ -1,12 +1,11 @@
 // src/lib/ai/dateParser.ts
-// Natural Language Date/Time Parser — Bulletproof version
+// Natural Language Date/Time Parser — Production-grade
 // "kal 11 bje", "har Sunday 9am", "parso shaam" → JavaScript Date
 
-import Groq from 'groq-sdk'
+import { getGroqClient } from '@/lib/ai/clients'
+import { AI_MODELS, APP } from '@/config'
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
-
-const DEFAULT_TZ = 'Asia/Kolkata'
+const DEFAULT_TZ = APP.DEFAULT_TIMEZONE
 
 // ─── TYPES ────────────────────────────────────────────────────
 export interface ParsedDateTime {
@@ -160,8 +159,8 @@ export async function parseDateTime(
   }).format(now)
 
   try {
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
+    const response = await getGroqClient().chat.completions.create({
+      model: AI_MODELS.DATE_PARSER,
       max_tokens: 200,
       temperature: 0.05,              // Very low — deterministic output
       response_format: { type: 'json_object' },
@@ -215,14 +214,15 @@ export async function parseDateTime(
       humanReadable: parsed.humanReadable || cleanText,
     }
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     // ── GUARDRAIL 7: JSON parse fail ─────────────────────────
-    if (err instanceof SyntaxError) {
+    const error = err instanceof Error ? err : new Error('Unknown error')
+    if (error instanceof SyntaxError) {
       console.error('[dateParser] JSON parse failed — Groq returned invalid JSON')
-    } else if (err?.status === 429) {
+    } else if (typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 429) {
       console.warn('[dateParser] Groq rate limited')
     } else {
-      console.error('[dateParser] Unexpected error:', err?.message)
+      console.error('[dateParser] Groq parsing failed:', error.message)
     }
 
     return { ...EMPTY, humanReadable: cleanText }

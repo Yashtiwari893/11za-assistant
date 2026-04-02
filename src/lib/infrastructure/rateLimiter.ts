@@ -163,7 +163,7 @@ export function checkRateLimit(limiter: RateLimiter, keyFn: (req: any) => string
           ip: req.ip,
         })
 
-        throw createError.rateLimited(retryAfter)
+        throw createError.rateLimited(retryAfter ?? undefined)
       }
 
       next()

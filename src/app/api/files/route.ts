@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
+import { getSupabaseClient } from "@/lib/infrastructure/database"
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabaseAdmin = getSupabaseClient()
 
 export async function GET() {
   try {
@@ -16,8 +13,9 @@ export async function GET() {
     if (error) throw error
 
     return NextResponse.json({ success: true, files })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to fetch files'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }
 
@@ -42,7 +40,8 @@ export async function DELETE(req: NextRequest) {
     if (error) throw error
 
     return NextResponse.json({ success: true, message: "File deleted successfully" })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to delete file'
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

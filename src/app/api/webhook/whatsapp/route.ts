@@ -17,7 +17,7 @@ import {
 import { handleGetBriefing } from '@/lib/features/briefing'
 import { helpMessage } from '@/lib/whatsapp/templates'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
-import { speechToText } from '@/lib/speechToText'
+import { speechToText } from '@/lib/ai/stt'
 import { generateAutoResponse } from '@/lib/autoResponder'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { logger, setTraceId } from '@/lib/infrastructure/logger'
@@ -25,7 +25,7 @@ import { createErrorResponse } from '@/lib/infrastructure/errorHandler'
 import { validatePhone, validatePlainText } from '@/lib/infrastructure/inputValidator'
 import { retryWithExponentialBackoff } from '@/lib/infrastructure/errorHandler'
 import { getContext, updateContext, addToHistory } from '@/lib/infrastructure/sessionContext'
-import type { Language } from '@/lib/whatsapp/templates'
+import type { Language } from '@/types'
 
 const supabaseAdmin = getSupabaseClient()
 
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       }])
 
       if (logErr) {
-        if ((logErr as any).code === '23505') {
+        if ((logErr as { code?: string }).code === '23505') {
           logger.info('ℹ️ Duplicate message ignored (Insert conflict)', { messageId })
           return NextResponse.json({ ok: true }) // Silent ignore
         }
@@ -414,7 +414,7 @@ export async function POST(req: NextRequest) {
           })
           await addToHistory(user.id, 'user', processedMessage)
         } catch (ctxErr) {
-          logger.warn('Session context update failed (silent)', { userId: user.id }, ctxErr as Error)
+          logger.warn('Session context update failed (silent)', { userId: user.id, error: (ctxErr as Error).message })
         }
       } else {
         // Not handled by any feature? Use Auto-Responder
@@ -426,10 +426,13 @@ export async function POST(req: NextRequest) {
       }
 
       // Mark as responded ATOMICALLY
-      await supabaseAdmin.from('whatsapp_messages')
-        .update({ is_responded: true, response_sent_at: new Date().toISOString() })
-        .eq('message_id', messageId)
-        .catch((e) => logger.error('Failed to mark as responded', { messageId }, e))
+      try {
+        await supabaseAdmin.from('whatsapp_messages')
+          .update({ is_responded: true, response_sent_at: new Date().toISOString() })
+          .eq('message_id', messageId)
+      } catch (markErr) {
+        logger.error('Failed to mark as responded', { messageId }, markErr as Error)
+      }
 
     } catch (featureErr) {
       logger.error('Feature handler error', { userId: user.id, intent }, featureErr as Error)

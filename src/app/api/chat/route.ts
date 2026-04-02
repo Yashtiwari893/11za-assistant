@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@supabase/supabase-js"
-import Groq from "groq-sdk"
+import { getSupabaseClient } from "@/lib/infrastructure/database"
+import { getGroqClient } from "@/lib/ai/clients"
+import { AI_MODELS } from "@/config"
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
+const supabaseAdmin = getSupabaseClient()
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,8 +29,8 @@ export async function POST(req: NextRequest) {
     const userPrompt = `Context from PDF file:\n${context}\n\nUser Question: ${message}`
 
     // 3. Stream from Groq (llama-3.3-70b-versatile)
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+    const completion = await getGroqClient().chat.completions.create({
+      model: AI_MODELS.CHAT_FALLBACK,
       messages: [
         { role: "system", content: "You are a helpful assistant. Use ONLY the provided context to answer questions. If info is missing, say you don't know." },
         { role: "user", content: userPrompt }
@@ -59,8 +55,9 @@ export async function POST(req: NextRequest) {
       headers: { "Content-Type": "text/plain; charset=utf-8" }
     })
 
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Chat error'
     console.error("Chat API error:", err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

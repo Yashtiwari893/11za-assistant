@@ -1,38 +1,9 @@
-import Groq from 'groq-sdk'
+import { getGroqClient } from '@/lib/ai/clients'
+import { AI_MODELS } from '@/config'
+import type { Intent, IntentResult } from '@/types'
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+export type { Intent, IntentResult }
 
-export type Intent =
-  | 'SET_REMINDER'
-  | 'SNOOZE_REMINDER'
-  | 'LIST_REMINDERS'
-  | 'CANCEL_REMINDER'
-  | 'ADD_TASK'
-  | 'LIST_TASKS'
-  | 'COMPLETE_TASK'
-  | 'DELETE_TASK'
-  | 'FIND_DOCUMENT'
-  | 'LIST_DOCUMENTS'
-  | 'DELETE_DOCUMENT'
-  | 'DELETE_ALL_DOCUMENTS'
-  | 'GET_BRIEFING'
-  | 'ONBOARDING'
-  | 'HELP'
-  | 'UNKNOWN'
-
-export interface IntentResult {
-  intent: Intent
-  confidence: number
-  extractedData: {
-    dateTimeText?: string
-    taskContent?: string
-    listName?: string
-    documentQuery?: string
-    reminderTitle?: string
-    isMultiTask?: boolean
-    taskItems?: string[]
-  }
-}
 
 const SYSTEM_PROMPT = `You are ZARA's intent classifier for a WhatsApp assistant.
 Users speak in Hinglish (Hindi + English mixed). Be smart about it.
@@ -166,7 +137,7 @@ export async function classifyIntent(
     : ''
 
   try {
-    const completion = await groq.chat.completions.create({
+    const completion = await getGroqClient().chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
@@ -174,7 +145,7 @@ export async function classifyIntent(
           content: `Current local time (IST): ${dateStr}, ${timeStr}. Language: ${lang}.${contextHint}\n\nMessage: "${message}"`
         }
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: AI_MODELS.INTENT_CLASSIFIER,
       temperature: 0.1,
       response_format: { type: 'json_object' }
     })

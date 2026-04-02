@@ -1,11 +1,12 @@
 // src/app/api/generate-prompt/route.ts
-// System Prompt Generator — Bulletproof version with guardrails
+// System Prompt Generator — Production-grade with guardrails
 
 import { NextRequest, NextResponse } from 'next/server'
-import Groq from 'groq-sdk'
-import { supabase } from '@/lib/supabaseClient'
+import { getGroqClient } from '@/lib/ai/clients'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
+import { AI_MODELS } from '@/config'
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! })
+const supabase = getSupabaseClient()
 
 // ─── GUARDRAIL: Intent validation ─────────────────────────────
 const MIN_INTENT_LENGTH = 10
@@ -133,8 +134,8 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Generate system prompt via Groq ───────────────────
-        const completion = await groq.chat.completions.create({
-            model: 'llama-3.3-70b-versatile',
+        const completion = await getGroqClient().chat.completions.create({
+            model: AI_MODELS.SYSTEM_PROMPT_GEN,
             temperature: 0.4,   // Thoda lower — consistent output
             max_tokens: 1000,
             messages: [
@@ -211,9 +212,9 @@ export async function POST(req: NextRequest) {
             intent: cleanIntent,
         })
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         // ── GUARDRAIL 5: Groq rate limit ─────────────────────
-        if (error?.status === 429) {
+        if (typeof error === 'object' && error !== null && 'status' in error && (error as { status: number }).status === 429) {
             return NextResponse.json(
                 { error: 'Too many requests — please wait a moment and try again' },
                 { status: 429 }

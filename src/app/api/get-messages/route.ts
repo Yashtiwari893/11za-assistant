@@ -1,8 +1,10 @@
 // src/app/api/messages/route.ts
-// Chat Messages Fetch — Bulletproof version with guardrails
+// Chat Messages Fetch — Production-grade with guardrails
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabaseClient'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
+
+const supabase = getSupabaseClient()
 
 // Max messages per fetch — WhatsApp context ke liye 50 kaafi hai
 const MAX_MESSAGES = 50

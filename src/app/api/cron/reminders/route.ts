@@ -1,23 +1,9 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
-import type { Language } from '@/lib/whatsapp/templates'
+import type { Language, DueReminderRow } from '@/types'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
-type DueReminderRow = {
-  reminder_id: string
-  title: string
-  note: string | null
-  scheduled_at?: string
-  recurrence?: string | null
-  recurrence_time?: string | null
-  phone: string
-  language: string | null
-}
+const supabase = getSupabaseClient()
 
 function isAuthorizedCronRequest(req: Request): boolean {
   const cronSecret = process.env.CRON_SECRET

@@ -1,17 +1,14 @@
 // src/lib/features/document.ts
-// Document Vault — Bulletproof version with all guardrails
+// Document Vault — Production-grade with all guardrails
 
-import { createClient } from '@supabase/supabase-js'
+import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import {
   documentSaved, documentNotFound, errorMessage,
-  type Language
 } from '@/lib/whatsapp/templates'
+import type { Language } from '@/types'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+const supabase = getSupabaseClient()
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 
