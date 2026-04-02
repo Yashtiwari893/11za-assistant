@@ -20,20 +20,11 @@ Extract:
 ## CRITICAL EXTRACTION RULES
 - NO VERBS in titles: "delete my grocery list" -> listName: "grocery", intent: DELETE_LIST. NOT "delete my grocery".
 - GENERIC SEARCH: "task list", "reminders dikhao", "list clear karo" -> isGenericSearch: true.
-- DELETE_LIST must only set listName when an explicit target exists. For vague phrases like "remove all list" or "delete list", leave listName empty and let the app ask for clarification.
 - CONTEXT PRIORITY: If message is "send it", look for "last_referenced_id" in hints.
 - RESPONSE FORMAT: Strictly JSON.
 
 ## INTENTS
-SET_REMINDER, LIST_REMINDERS, SNOOZE_REMINDER, CANCEL_REMINDER, ADD_TASK, LIST_TASKS, COMPLETE_TASK, DELETE_TASK, DELETE_LIST, FIND_DOCUMENT, LIST_DOCUMENTS, DELETE_DOCUMENT, GET_BRIEFING, HELP, UNKNOWN
-
-## EXAMPLES BY INTENT
-- HELP: "help", "kya kar sakte ho", "features batao", "commands", "manual".
-- UNKNOWN: "hey", "hi", "kaise ho?", "ai chat kya hai?", "zara kaun hai?", "weather kaisa hai?". (Conversational or identity stuff)
-- LIST_TASKS: "grocery list dikhao", "tasks kya hain" (isGenericSearch: true for second).
-- DELETE_LIST: "delete my grocery list", "grocery list hata do".
-- FIND_DOCUMENT: "marksheet show karo", "aadhar card nikalo".
-`
+SET_REMINDER, LIST_REMINDERS, SNOOZE_REMINDER, CANCEL_REMINDER, ADD_TASK, LIST_TASKS, COMPLETE_TASK, DELETE_TASK, DELETE_LIST, FIND_DOCUMENT, LIST_DOCUMENTS, DELETE_DOCUMENT, GET_BRIEFING, HELP, UNKNOWN`
 
 export async function classifyIntent(
   message: string,

@@ -4,7 +4,6 @@
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { getGroqClient } from '@/lib/ai/clients'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
-import { truncateWhatsAppMessage } from '@/lib/whatsapp/message'
 import { AI_MODELS, APP, WHATSAPP_AUTH_TOKEN, WHATSAPP_ORIGIN } from '@/config'
 import type { AutoResponseResult } from '@/types'
 
@@ -17,22 +16,20 @@ You are ZARA, a premium AI assistant for business and life.
 - Reply like a professional executive assistant — smart, efficient, polite.
 - Use a mix of English and Hindi (Hinglish) as per the user's vibe.
 - Keep replies VERY SHORT — 1 to 2 lines max.
-- IDENTITY: If someone asks "Kaun ho" or "AI Chat kya hai", explain that "AI Chat" is a feature where you can talk to ZARA about anything (e.g. general advice, chatting), not just tasks or documents.
-- When someone says "done", "ok", "thanks", or "theek hai", reply with a warm professional closing like "Great! Let me know if you need anything else. 😊" or "Noted. Aapki help karke khushi hui! ✅"
+- When someone says "done", "ok", or "thanks", reply with a warm professional closing like "Great! Let me know if you need anything else. 😊" or "Noted. Aapki help karke khushi hui! ✅"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-STRICT RULES
+STRICT PROTECTION RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. NO EXCUSES / HALLUCINATION PROTECTION:
-  - NEVER say "I've added it" or "Sent it" if you didn't just perform that tool action.
-  - If data (like a task list) is missing or not found, simply say: "I couldn't find that in your account. Please try clarify the name! 😊"
-  - DO NOT make up excuses like "I added it but didn't send it yet".
-  - DO NOT guess or hallucinate user data.
+2. NO EXCUSES / HALLUCINATION PROTECTION:
+   - NEVER say "I've added it" or "Sent it" if you didn't just perform that tool action.
+   - If data (like a task list) is missing or not found, simply say: "I couldn't find that in your account. Please try clarify the name! 😊"
+   - DO NOT make up excuses like "I added it but didn't send it yet".
+   - DO NOT guess or hallucinate user data.
 
-2. CONVERSATION FLOW:
-  - Be conversational and helpful.
-  - Avoid over-explaining; keep responses concise.
-  - If unsure what the user wants, ask for clarification gently.
+3. ABUSE / GALI MANAGEMENT:
+   - If a user uses abusive language or "Gali" (e.g., sale, kutte, bc, etc.), STAY CALM and PROFESSIONAL.
+   - DO NOT repeat the abusive words. Simply say: "I'm here to help you professionally. Let's keep our conversation respectful so I can assist you better! 😊"
 `.trim()
 
 /** Strips AI self-reference phrases that would break the ZARA persona. */
@@ -300,18 +297,16 @@ export async function generateAutoResponse(
       return { success: false, error: 'AI returned empty response' }
     }
 
-    const finalReply = truncateWhatsAppMessage(reply)
-
     const sendResult = await sendWhatsAppMessage({
       to: cleanFrom,
-      message: finalReply,
+      message: reply,
       authToken: phoneConfig.authToken,
       origin: phoneConfig.origin
     })
 
     if (!sendResult.success) {
       console.error('[autoResponder] WhatsApp send failed:', sendResult.error)
-      return { success: false, response: finalReply, sent: false, error: 'WhatsApp send failed' }
+      return { success: false, response: reply, sent: false, error: 'WhatsApp send failed' }
     }
 
     const botMessageId = `auto_${messageId}_${Date.now()}`
@@ -322,7 +317,7 @@ export async function generateAutoResponse(
         botMessageId,
         fromNumber: cleanTo,
         toNumber: cleanFrom,
-        replyText: finalReply,
+        replyText: reply,
         originalMessageId: messageId,
       }),
       markMessageAsResponded(messageId),

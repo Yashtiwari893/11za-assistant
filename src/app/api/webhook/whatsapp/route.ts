@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
     
     // Safety Guard: Conversational cues shouldn't trigger heavy features
     const lowerMessage = processedMessage.toLowerCase().trim()
-    const conversationalCues = ['hey', 'hi', 'hello', 'hola', 'namaste', 'done', 'ok', 'okay', 'thanks', 'thank you', 'dhanyawad', 'shukriya', 'thnx', 'wow', 'good']
+    const conversationalCues = ['done', 'ok', 'okay', 'thanks', 'thank you', 'dhanyawad', 'shukriya', 'thnx', 'wow', 'good']
     
     let intentResult;
     if (conversationalCues.includes(lowerMessage)) {
@@ -298,7 +298,6 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -322,6 +321,7 @@ export async function POST(req: NextRequest) {
             language: lang,
             listName: extractedData.listName || 'general',
             isGenericSearch: extractedData.isGenericSearch,
+            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -353,7 +353,7 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            listName: extractedData.listName || processedMessage,
+            listName: extractedData.listName || 'general',
             prefix: abuseWarning
           })
           isHandled = true
