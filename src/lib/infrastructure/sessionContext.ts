@@ -9,6 +9,7 @@ export interface SessionContext {
   document_id?: string
   drive_file_id?: string
   doc_type?: string
+  last_referenced_id?: string
   conversation_history?: Array<{role: string, content: string, ts: number}>
 }
 

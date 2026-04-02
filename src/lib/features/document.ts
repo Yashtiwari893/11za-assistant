@@ -339,6 +339,8 @@ export async function handleFindDocument(params: {
     mediaUrl: fileUrl,
     mediaType: doc.doc_type === 'pdf' ? 'document' : 'image'
   })
+
+  return doc.id
 }
 
 // ─── LIST ALL DOCUMENTS ───────────────────────────────────────

@@ -320,6 +320,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             listName: extractedData.listName || 'general',
+            isGenericSearch: extractedData.isGenericSearch,
             prefix: abuseWarning
           })
           isHandled = true
@@ -349,7 +350,7 @@ export async function POST(req: NextRequest) {
 
         case 'FIND_DOCUMENT':
           try {
-            await handleFindDocument({
+            const foundDocId = await handleFindDocument({
               userId: user.id,
               phone: cleanFromPhone,
               language: lang,
@@ -357,10 +358,13 @@ export async function POST(req: NextRequest) {
                 || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
                 || processedMessage,
             })
+            if (foundDocId) {
+                // Tracking context
+                await updateContext(user.id, { last_referenced_id: foundDocId as string })
+            }
             isHandled = true
           } catch (docErr) {
             logger.error('FindDocument internal fail', { userId: user.id }, docErr as Error)
-            // Even if it failed, if it reached here it was likely handled or at least tried specifically
             isHandled = true 
           }
           break
@@ -404,13 +408,15 @@ export async function POST(req: NextRequest) {
           break
       }
 
-      // Background context update (non-blocking)
+      // Background context update (non-blocking) - Enhanced with referenced ID
       if (isHandled) {
         try {
           await updateContext(user.id, {
             last_intent: intent,
             last_list_name: extractedData?.listName || ctx.last_list_name || undefined,
             last_document_query: extractedData?.documentQuery || ctx.last_document_query || undefined,
+            // If it was a generic search, we don't save a single ID
+            last_referenced_id: extractedData.lastReferencedId || ctx.last_referenced_id || undefined
           })
           await addToHistory(user.id, 'user', processedMessage)
         } catch (ctxErr) {

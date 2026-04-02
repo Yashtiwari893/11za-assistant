@@ -172,15 +172,22 @@ export async function handleAddTask(params: {
   })
 }
 
-// ─── LIST TASKS ───────────────────────────────────────────────
 export async function handleListTasks(params: {
   userId: string
   phone: string
   language: Language
   listName: string
+  isGenericSearch?: boolean
   prefix?: string
 }) {
-  const { userId, phone, language, prefix = '' } = params
+  const { userId, phone, language, isGenericSearch, prefix = '' } = params
+  
+  // ── 1. GENERIC SEARCH HANDLING ──────────────────────────────
+  // If user says "tasks" or "list", show them all available lists
+  if (isGenericSearch || !params.listName || ['task', 'tasks', 'list', 'lists', 'all', 'sab'].includes(params.listName.toLowerCase())) {
+    return await handleListAllLists({ userId, phone, language })
+  }
+
   const listName = normalizeListName(params.listName)
 
   const { data: lists } = await supabase
@@ -193,15 +200,14 @@ export async function handleListTasks(params: {
 
   const list = lists?.[0]
 
-  // ── GUARDRAIL: List exist nahi karti ──────────────────────
+  // ── 2. FUZZY FALLBACK ─────────────────────────────────────
+  // If no exact/partial list found, show all lists to help them
   if (!list) {
-    await sendWhatsAppMessage({
-      to: phone,
-      message: prefix + (language === 'hi'
-        ? `📭 "${listName}" naam ki koi list nahi hai।\n\n_"${listName} mein kuch add karo" bolke list banao!_`
-        : `📭 No list found named "${listName}".\n\n_Say "add something to ${listName}" to create it!_`)
-    })
-    return
+    const listHint = language === 'hi' 
+      ? `"${listName}" naam ki list nahi mili. Aapki playlists:` 
+      : `Couldn't find a list named "${listName}". Here are your lists:`
+    
+    return await handleListAllLists({ userId, phone, language })
   }
 
   const { data: tasks } = await supabase
