@@ -4,6 +4,7 @@
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import { morningBriefing } from '@/lib/whatsapp/templates'
+import { truncateWhatsAppMessage } from '@/lib/whatsapp/message'
 import type { Language } from '@/types'
 
 const supabase = getSupabaseClient()
@@ -102,13 +103,7 @@ export async function sendBriefingToUser(user: {
 
   // ── GUARDRAIL 2: Send with retry ──────────────────────────
   try {
-    // Guard: truncate to WhatsApp 4000 char limit
-    const WHATSAPP_MAX_CHARS = 4000
-    const finalMessage = message.length > WHATSAPP_MAX_CHARS
-      ? `${message.substring(0, WHATSAPP_MAX_CHARS - 6)}...\n\n_(truncated)_`
-      : message
-
-    await sendWhatsAppMessage({ to: user.phone, message: finalMessage })
+    await sendWhatsAppMessage({ to: user.phone, message: truncateWhatsAppMessage(message) })
   } catch (sendErr) {
     console.error(`[briefing] Send failed for ${user.phone}:`, sendErr)
     throw sendErr  // Promise.allSettled mein failed count mein jayega

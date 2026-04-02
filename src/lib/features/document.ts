@@ -6,14 +6,13 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import {
   documentSaved, documentNotFound, errorMessage,
 } from '@/lib/whatsapp/templates'
+import { truncateWhatsAppMessage } from '@/lib/whatsapp/message'
 import type { Language } from '@/types'
+import { updateContext } from '@/lib/infrastructure/sessionContext'
 
 const supabase = getSupabaseClient()
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
-
-import { validatePhone, validatePlainText } from '@/lib/infrastructure/inputValidator'
-import { updateContext } from '@/lib/infrastructure/sessionContext'
 
 // Supported MIME types
 const SUPPORTED_TYPES = [
@@ -386,15 +385,9 @@ export async function handleListDocuments(params: {
       ? `_Koi document pane ke liye naam bolo। Jaise "aadhar dikhao"_`
       : `_Say a name to retrieve. E.g. "show aadhar"_`)
 
-  // Guard: truncate to WhatsApp 4000 char limit
-  const WHATSAPP_MAX_CHARS = 4000
-  if (message.length > WHATSAPP_MAX_CHARS) {
-    message = `${message.substring(0, WHATSAPP_MAX_CHARS - 6)}...\n\n_(truncated)_`
-  }
-
   await sendWhatsAppMessage({
     to: phone,
-    message
+    message: truncateWhatsAppMessage(message)
   })
 }
 

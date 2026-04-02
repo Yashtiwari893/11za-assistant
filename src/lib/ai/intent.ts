@@ -20,6 +20,7 @@ Extract:
 ## CRITICAL EXTRACTION RULES
 - NO VERBS in titles: "delete my grocery list" -> listName: "grocery", intent: DELETE_LIST. NOT "delete my grocery".
 - GENERIC SEARCH: "task list", "reminders dikhao", "list clear karo" -> isGenericSearch: true.
+- DELETE_LIST must only set listName when an explicit target exists. For vague phrases like "remove all list" or "delete list", leave listName empty and let the app ask for clarification.
 - CONTEXT PRIORITY: If message is "send it", look for "last_referenced_id" in hints.
 - RESPONSE FORMAT: Strictly JSON.
 

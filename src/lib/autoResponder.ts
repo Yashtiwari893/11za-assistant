@@ -4,6 +4,7 @@
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { getGroqClient } from '@/lib/ai/clients'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
+import { truncateWhatsAppMessage } from '@/lib/whatsapp/message'
 import { AI_MODELS, APP, WHATSAPP_AUTH_TOKEN, WHATSAPP_ORIGIN } from '@/config'
 import type { AutoResponseResult } from '@/types'
 
@@ -298,11 +299,7 @@ export async function generateAutoResponse(
       return { success: false, error: 'AI returned empty response' }
     }
 
-    // Guard: truncate to WhatsApp 4000 char limit, leaving room for "..." indicator
-    const WHATSAPP_MAX_CHARS = 4000
-    const finalReply = reply.length > WHATSAPP_MAX_CHARS
-      ? `${reply.substring(0, WHATSAPP_MAX_CHARS - 6)}...\n\n_(truncated)_`
-      : reply
+    const finalReply = truncateWhatsAppMessage(reply)
 
     const sendResult = await sendWhatsAppMessage({
       to: cleanFrom,

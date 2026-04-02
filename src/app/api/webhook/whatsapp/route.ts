@@ -353,7 +353,7 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            listName: extractedData.listName || 'general',
+            listName: extractedData.listName || processedMessage,
             prefix: abuseWarning
           })
           isHandled = true

@@ -6,6 +6,7 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import {
   taskAdded, taskList, taskCompleted, errorMessage,
 } from '@/lib/whatsapp/templates'
+import { truncateWhatsAppMessage } from '@/lib/whatsapp/message'
 import type { Language } from '@/types'
 
 const supabase = getSupabaseClient()
@@ -98,7 +99,7 @@ export async function handleAddTask(params: {
 
   // ── GUARDRAIL 1: Empty content check ──────────────────────
   const taskContent = cleanTaskContent(params.taskContent)
-  if (!taskContent || taskContent.length < 2) {
+  if (!taskContent || taskContent.length < 3) {
     await sendWhatsAppMessage({
       to: phone,
       message: language === 'hi'
@@ -184,7 +185,8 @@ export async function handleListTasks(params: {
   
   // ── 1. GENERIC SEARCH HANDLING ──────────────────────────────
   // If user says "tasks" or "list", show them all available lists
-  if (isGenericSearch || !params.listName || ['task', 'tasks', 'list', 'lists', 'all', 'sab'].includes(params.listName.toLowerCase())) {
+  const cleanedListName = params.listName?.toLowerCase().replace(/\b(list|lists|dikhao|dekho|show)\b/gi, '').trim() || ''
+  if (isGenericSearch || !params.listName || !cleanedListName || ['task', 'tasks', 'list', 'lists', 'all', 'sab', ''].includes(cleanedListName)) {
     return await handleListAllLists({ userId, phone, language })
   }
 
@@ -227,9 +229,10 @@ export async function handleListTasks(params: {
     return
   }
 
-  await sendWhatsAppMessage({
+    const listMessage = taskList(list.name, tasks, language)
+    await sendWhatsAppMessage({
     to: phone,
-    message: prefix + taskList(list.name, tasks, language)
+      message: prefix + truncateWhatsAppMessage(listMessage)
   })
 }
 
@@ -246,13 +249,18 @@ export async function handleCompleteTask(params: {
   const taskContent = cleanTaskContent(params.taskContent)
 
   // ── GUARDRAIL: Empty content ───────────────────────────────
-  if (!taskContent || taskContent.length < 2) {
+  if (!taskContent || taskContent.length < 3) {
     await sendWhatsAppMessage({
       to: phone,
       message: prefix + (language === 'hi'
         ? '❓ Kaunsa task complete karna hai? Naam batao।'
         : '❓ Which task did you complete? Please mention the name.')
     })
+    return
+  }
+
+  const lowerContent = taskContent.toLowerCase().trim()
+  if (['ok', 'okay', 'done', 'yes', 'no'].includes(lowerContent)) {
     return
   }
 
@@ -374,7 +382,33 @@ export async function handleDeleteList(params: {
   prefix?: string
 }) {
   const { userId, phone, language, prefix = '' } = params
-  const listName = normalizeListName(params.listName)
+  const rawListName = params.listName
+    .replace(/\b(delete|remove|hata|hatao|mitao|clear|list|all|everything|sab|saari|saare)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const listName = normalizeListName(rawListName)
+
+  if (!listName || ['all', 'task', 'tasks', 'list', 'lists', 'general'].includes(listName)) {
+    const { data: allLists } = await supabase
+      .from('lists')
+      .select('name')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5)
+
+    const availableLists = allLists && allLists.length > 0
+      ? allLists.map(item => `*${item.name}*`).join(', ')
+      : ''
+
+    await sendWhatsAppMessage({
+      to: phone,
+      message: prefix + (language === 'hi'
+        ? `❓ Kripya delete karne ke liye exact list ka naam batao.${availableLists ? `\n\nAapki lists: ${availableLists}` : ''}`
+        : `❓ Please tell me the exact list name to delete.${availableLists ? `\n\nYour lists: ${availableLists}` : ''}`)
+    })
+    return
+  }
 
   const { data: lists } = await supabase
     .from('lists')
@@ -387,11 +421,22 @@ export async function handleDeleteList(params: {
   const list = lists?.[0]
 
   if (!list) {
+    const { data: allLists } = await supabase
+      .from('lists')
+      .select('name')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5)
+
+    const availableLists = allLists && allLists.length > 0
+      ? allLists.map(item => `*${item.name}*`).join(', ')
+      : ''
+
     await sendWhatsAppMessage({
       to: phone,
       message: prefix + (language === 'hi'
-        ? `❓ "${listName}" naam ki list nahi mili.`
-        : `❓ Couldn't find a list named "${listName}" to delete.`)
+        ? `❓ "${listName}" naam ki list nahi mili.${availableLists ? `\n\nAapki lists: ${availableLists}` : ''}`
+        : `❓ Couldn't find a list named "${listName}" to delete.${availableLists ? `\n\nYour lists: ${availableLists}` : ''}`)
     })
     return
   }
@@ -485,14 +530,16 @@ export async function handleListAllLists(params: {
     return `• *${l.name}* — ${taskCount} item${taskCount !== 1 ? 's' : ''}`
   }).join('\n')
 
+  const allListMessage = (language === 'hi'
+    ? `📋 *Aapki Lists:*\n\n`
+    : `📋 *Your Lists:*\n\n`) +
+    `${listText}\n\n` +
+    (language === 'hi'
+      ? `_Dekhne ke liye naam bolo। Jaise "grocery list dikhao"_`
+      : `_Say a list name to view. E.g. "show grocery list"_`)
+
   await sendWhatsAppMessage({
     to: phone,
-    message: (language === 'hi'
-      ? `📋 *Aapki Lists:*\n\n`
-      : `📋 *Your Lists:*\n\n`) +
-      `${listText}\n\n` +
-      (language === 'hi'
-        ? `_Dekhne ke liye naam bolo। Jaise "grocery list dikhao"_`
-        : `_Say a list name to view. E.g. "show grocery list"_`)
+    message: truncateWhatsAppMessage(allListMessage)
   })
 }

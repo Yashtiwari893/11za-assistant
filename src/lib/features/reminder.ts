@@ -7,6 +7,7 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import {
   reminderSet, reminderList, reminderSnoozed, errorMessage,
 } from '@/lib/whatsapp/templates'
+import { truncateWhatsAppMessage } from '@/lib/whatsapp/message'
 import type { Language } from '@/types'
 import { APP } from '@/config'
 
@@ -102,7 +103,7 @@ export async function handleSetReminder(params: {
   }
 
   // Guard: Title too short
-  if (!title || title.length < 2) {
+  if (!title || title.length < 3) {
     await sendWhatsAppMessage({
       to: phone,
       message: language === 'hi'
@@ -193,7 +194,7 @@ export async function handleListReminders(params: {
   }).join('\n\n')
 
   const header = language === 'hi' ? '⏰ *Aapke Reminders:*' : '⏰ *Your Reminders:*'
-  await sendWhatsAppMessage({ to: phone, message: prefix + `${header}\n\n${lines}` })
+  await sendWhatsAppMessage({ to: phone, message: prefix + truncateWhatsAppMessage(`${header}\n\n${lines}`) })
 }
 
 // ─── SNOOZE REMINDER ──────────────────────────────────────────
