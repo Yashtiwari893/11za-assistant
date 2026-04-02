@@ -24,19 +24,7 @@ Extract:
 - RESPONSE FORMAT: Strictly JSON.
 
 ## INTENTS
-SET_REMINDER, LIST_REMINDERS, SNOOZE_REMINDER, CANCEL_REMINDER, ADD_TASK, LIST_TASKS, COMPLETE_TASK, DELETE_TASK, DELETE_LIST, FIND_DOCUMENT, LIST_DOCUMENTS, DELETE_DOCUMENT, GET_BRIEFING, HELP, UNKNOWN
-
-## GUIDELINES
-- HELP: Only when using keywords like "Help", "Commands", "Menu", "Help me", "List features". (DO NOT use for general chat about what the bot IS).
-- UNKNOWN: Personal questions ("Kaun ho tum?"), Identity queries ("What is ZARA?", "AI chat kya hai?"), Greetings ("Hi", "Hello"), or general chit-chat.
-
-## EXAMPLES:
-- HELP: "help", "kya kar sakte ho", "features batao", "menu dikhao", "zara commands list"
-- UNKNOWN: "al chat kya hai", "what is ai chat", "you are who?", "can we talk?", "kya haal hai", "how are you zara?"
-- ADD_TASK: "milk add karo grocery list mein", "grocery mein dahi add karo" (taskContent: "dahi", listName: "grocery")
-- LIST_TASKS: "grocery list dikhao", "tasks kya hain" (isGenericSearch: true for the second one)
-- DELETE_LIST: "delete my grocery list", "groceries list delete kar do" (listName: "grocery")
-- FIND_DOCUMENT: "aadhaar card dikhao", "marksheet bhejo" (documentQuery: "aadhaar card")`
+SET_REMINDER, LIST_REMINDERS, SNOOZE_REMINDER, CANCEL_REMINDER, ADD_TASK, LIST_TASKS, COMPLETE_TASK, DELETE_TASK, DELETE_LIST, FIND_DOCUMENT, LIST_DOCUMENTS, DELETE_DOCUMENT, GET_BRIEFING, HELP, UNKNOWN`
 
 export async function classifyIntent(
   message: string,
