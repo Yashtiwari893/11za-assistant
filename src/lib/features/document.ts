@@ -73,7 +73,11 @@ export async function handleSaveDocument(params: {
   }
 
   // ── Label + path ───────────────────────────────────────────
-  const label = cleanLabel(caption?.trim()) || guessLabel(normalizedType)
+  let label = cleanLabel(caption?.trim()) || guessLabel(normalizedType)
+  // Ensure label is not too short or invalid
+  if (!label || label.length < 3) {
+    label = `doc_${Date.now().toString().slice(-6)}`
+  }
   const ext = getExtension(normalizedType)
   const docType = normalizedType.includes('pdf') ? 'pdf' : 'image'
 
@@ -210,7 +214,7 @@ export async function handleUpdateDocumentLabel(params: {
   const label = cleanLabel(params.label) || params.label.trim()
 
   // ── GUARDRAIL: Label too short ─────────────────────────────
-  if (!label || label.length < 2) {
+  if (!label || label.length < 3) {
     await sendWhatsAppMessage({
       to: phone,
       message: language === 'hi'
@@ -267,7 +271,7 @@ export async function handleFindDocument(params: {
 
   // 3. PRIORITY 2: Fuzzy/Partial Word Search (If no exact match)
   if (results.length === 0) {
-    const words = finalQuery.split(/\s+/).filter(w => 
+    const words = finalQuery.split(/\s+/).filter(w =>
       w.length > 2 || /^\d+$/.test(w) // Allow short numbers but not short fluff
     )
 
@@ -279,7 +283,7 @@ export async function handleFindDocument(params: {
         .eq('user_id', userId)
         .or(orConditions)
         .order('uploaded_at', { ascending: false })
-      
+
       results = partialMatch || []
     }
   }
@@ -374,15 +378,23 @@ export async function handleListDocuments(params: {
     return `${icon} *${d.label}*${size}`
   }).join('\n')
 
+  let message = (language === 'hi'
+    ? `📁 *Aapka Vault (${docs.length} documents):*\n\n`
+    : `📁 *Your Vault (${docs.length} documents):*\n\n`) +
+    `${docList}\n\n` +
+    (language === 'hi'
+      ? `_Koi document pane ke liye naam bolo। Jaise "aadhar dikhao"_`
+      : `_Say a name to retrieve. E.g. "show aadhar"_`)
+
+  // Guard: truncate to WhatsApp 4000 char limit
+  const WHATSAPP_MAX_CHARS = 4000
+  if (message.length > WHATSAPP_MAX_CHARS) {
+    message = `${message.substring(0, WHATSAPP_MAX_CHARS - 6)}...\n\n_(truncated)_`
+  }
+
   await sendWhatsAppMessage({
     to: phone,
-    message: (language === 'hi'
-      ? `📁 *Aapka Vault (${docs.length} documents):*\n\n`
-      : `📁 *Your Vault (${docs.length} documents):*\n\n`) +
-      `${docList}\n\n` +
-      (language === 'hi'
-        ? `_Koi document pane ke liye naam bolo। Jaise "aadhar dikhao"_`
-        : `_Say a name to retrieve. E.g. "show aadhar"_`)
+    message
   })
 }
 
@@ -503,11 +515,12 @@ export async function syncPendingDocumentsToDrive(userId: string) {
 function cleanLabel(raw?: string): string {
   if (!raw) return ''
   return raw
-    .replace(/\b(mera|meri|ka|ki|ke|save|karo|naam|label|please|bhai)\b/gi, '')
-    .replace(/[^a-zA-Z0-9\s\u0900-\u097F]/g, '') // Hindi chars allow karo
+    .replace(/\b(mera|meri|ka|ki|ke|save|karo|naam|label|please|bhai|document|photo|file|bill|aadhar|passport|license|licence|certificate|scan|copy|original)\b/gi, '')
+    .replace(/[^a-zA-Z0-9\s\u0900-\u097F_-]/g, '') // Keep hyphens and underscores
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase()
+    .substring(0, 100) // Cap at 100 chars
 }
 
 function guessLabel(mimeType: string): string {

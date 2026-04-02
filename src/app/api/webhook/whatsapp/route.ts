@@ -298,6 +298,7 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
+            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -321,7 +322,6 @@ export async function POST(req: NextRequest) {
             language: lang,
             listName: extractedData.listName || 'general',
             isGenericSearch: extractedData.isGenericSearch,
-            prefix: abuseWarning
           })
           isHandled = true
           break

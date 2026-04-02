@@ -298,16 +298,22 @@ export async function generateAutoResponse(
       return { success: false, error: 'AI returned empty response' }
     }
 
+    // Guard: truncate to WhatsApp 4000 char limit, leaving room for "..." indicator
+    const WHATSAPP_MAX_CHARS = 4000
+    const finalReply = reply.length > WHATSAPP_MAX_CHARS
+      ? `${reply.substring(0, WHATSAPP_MAX_CHARS - 6)}...\n\n_(truncated)_`
+      : reply
+
     const sendResult = await sendWhatsAppMessage({
       to: cleanFrom,
-      message: reply,
+      message: finalReply,
       authToken: phoneConfig.authToken,
       origin: phoneConfig.origin
     })
 
     if (!sendResult.success) {
       console.error('[autoResponder] WhatsApp send failed:', sendResult.error)
-      return { success: false, response: reply, sent: false, error: 'WhatsApp send failed' }
+      return { success: false, response: finalReply, sent: false, error: 'WhatsApp send failed' }
     }
 
     const botMessageId = `auto_${messageId}_${Date.now()}`
@@ -318,7 +324,7 @@ export async function generateAutoResponse(
         botMessageId,
         fromNumber: cleanTo,
         toNumber: cleanFrom,
-        replyText: reply,
+        replyText: finalReply,
         originalMessageId: messageId,
       }),
       markMessageAsResponded(messageId),
