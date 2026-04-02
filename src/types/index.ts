@@ -148,6 +148,7 @@ export type Intent =
   | 'LIST_TASKS'
   | 'COMPLETE_TASK'
   | 'DELETE_TASK'
+  | 'DELETE_LIST'
   | 'FIND_DOCUMENT'
   | 'LIST_DOCUMENTS'
   | 'DELETE_DOCUMENT'

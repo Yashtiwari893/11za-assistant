@@ -365,6 +365,52 @@ export async function handleDeleteTask(params: {
   })
 }
 
+// ─── DELETE LIST ──────────────────────────────────────────────
+export async function handleDeleteList(params: {
+  userId: string
+  phone: string
+  language: Language
+  listName: string
+  prefix?: string
+}) {
+  const { userId, phone, language, prefix = '' } = params
+  const listName = normalizeListName(params.listName)
+
+  const { data: lists } = await supabase
+    .from('lists')
+    .select('id, name')
+    .eq('user_id', userId)
+    .ilike('name', `%${listName}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  const list = lists?.[0]
+
+  if (!list) {
+    await sendWhatsAppMessage({
+      to: phone,
+      message: prefix + (language === 'hi'
+        ? `❓ "${listName}" naam ki list nahi mili.`
+        : `❓ Couldn't find a list named "${listName}" to delete.`)
+    })
+    return
+  }
+
+  // Deleting the list will cascade delete tasks in a real prod DB,
+  // but let's be explicit and delete tasks first for safety if needed,
+  // or just rely on cascade if we have FK set.
+  // Actually, we'll delete tasks first.
+  await supabase.from('tasks').delete().eq('list_id', list.id)
+  await supabase.from('lists').delete().eq('id', list.id)
+
+  await sendWhatsAppMessage({
+    to: phone,
+    message: prefix + (language === 'hi'
+      ? `✅ *${list.name}* list aur uske saare tasks delete ho gaye!`
+      : `✅ Deleted *${list.name}* list and all its tasks!`)
+  })
+}
+
 // ─── CLEAR COMPLETED TASKS ────────────────────────────────────
 // "Meri grocery list saaf karo" — completed tasks hata do
 export async function handleClearCompleted(params: {

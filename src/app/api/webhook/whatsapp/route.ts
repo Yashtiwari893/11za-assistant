@@ -8,7 +8,7 @@ import {
 } from '@/lib/features/reminder'
 import {
   handleAddTask, handleListTasks, handleCompleteTask,
-  handleDeleteTask
+  handleDeleteTask, handleDeleteList
 } from '@/lib/features/task'
 import {
   handleSaveDocument, handleFindDocument, handleListDocuments,
@@ -343,6 +343,17 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
+            prefix: abuseWarning
+          })
+          isHandled = true
+          break
+
+        case 'DELETE_LIST':
+          await handleDeleteList({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            listName: extractedData.listName || 'general',
             prefix: abuseWarning
           })
           isHandled = true
