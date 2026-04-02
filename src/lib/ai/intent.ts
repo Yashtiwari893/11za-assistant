@@ -24,7 +24,15 @@ Extract:
 - RESPONSE FORMAT: Strictly JSON.
 
 ## INTENTS
-SET_REMINDER, LIST_REMINDERS, SNOOZE_REMINDER, CANCEL_REMINDER, ADD_TASK, LIST_TASKS, COMPLETE_TASK, DELETE_TASK, DELETE_LIST, FIND_DOCUMENT, LIST_DOCUMENTS, DELETE_DOCUMENT, GET_BRIEFING, HELP, UNKNOWN`
+SET_REMINDER, LIST_REMINDERS, SNOOZE_REMINDER, CANCEL_REMINDER, ADD_TASK, LIST_TASKS, COMPLETE_TASK, DELETE_TASK, DELETE_LIST, FIND_DOCUMENT, LIST_DOCUMENTS, DELETE_DOCUMENT, GET_BRIEFING, HELP, UNKNOWN
+
+## EXAMPLES BY INTENT
+- HELP: "help", "kya kar sakte ho", "features batao", "commands", "manual".
+- UNKNOWN: "hey", "hi", "kaise ho?", "ai chat kya hai?", "zara kaun hai?", "weather kaisa hai?". (Conversational or identity stuff)
+- LIST_TASKS: "grocery list dikhao", "tasks kya hain" (isGenericSearch: true for second).
+- DELETE_LIST: "delete my grocery list", "grocery list hata do".
+- FIND_DOCUMENT: "marksheet show karo", "aadhar card nikalo".
+`
 
 export async function classifyIntent(
   message: string,

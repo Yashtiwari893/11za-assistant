@@ -225,7 +225,7 @@ export async function POST(req: NextRequest) {
     
     // Safety Guard: Conversational cues shouldn't trigger heavy features
     const lowerMessage = processedMessage.toLowerCase().trim()
-    const conversationalCues = ['done', 'ok', 'okay', 'thanks', 'thank you', 'dhanyawad', 'shukriya', 'thnx', 'wow', 'good']
+    const conversationalCues = ['hey', 'hi', 'hello', 'hola', 'namaste', 'done', 'ok', 'okay', 'thanks', 'thank you', 'dhanyawad', 'shukriya', 'thnx', 'wow', 'good']
     
     let intentResult;
     if (conversationalCues.includes(lowerMessage)) {
