@@ -330,7 +330,26 @@ export async function handleDeleteTask(params: {
   prefix?: string
 }) {
   const { userId, phone, language, listName, prefix = '' } = params
-  const taskContent = cleanTaskContent(params.taskContent)
+  
+  // Strip action keywords from task content
+  const rawTaskContent = params.taskContent
+    .replace(/\b(delete|remove|hata|hatao|mitao|clear)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  
+  // Reject if nothing meaningful left or it's a generic word
+  const genericTerms = ['task', 'tasks', 'item', 'items', 'all', 'everything', 'sab', 'saari', 'saare', 'list', 'lists']
+  if (!rawTaskContent || genericTerms.includes(rawTaskContent.toLowerCase())) {
+    await sendWhatsAppMessage({
+      to: phone,
+      message: prefix + (language === 'hi'
+        ? `❓ Kripya delete karne ke liye exact task ka naam batao.`
+        : `❓ Please tell me the exact task name to delete.`)
+    })
+    return
+  }
+  
+  const taskContent = cleanTaskContent(rawTaskContent)
 
   let query = supabase
     .from('tasks')
