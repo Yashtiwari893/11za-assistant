@@ -4,6 +4,7 @@
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { getGroqClient } from '@/lib/ai/clients'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
+import { getContext } from '@/lib/infrastructure/sessionContext'
 import { AI_MODELS, APP, WHATSAPP_AUTH_TOKEN, WHATSAPP_ORIGIN } from '@/config'
 import type { AutoResponseResult } from '@/types'
 
@@ -12,24 +13,37 @@ import type { AutoResponseResult } from '@/types'
 const GROQ_TEMPERATURE = 0.3
 
 const ZARA_BASE_RULES = `
-You are ZARA, a premium AI assistant for business and life.
-- Reply like a professional executive assistant — smart, efficient, polite.
-- Use a mix of English and Hindi (Hinglish) as per the user's vibe.
-- Keep replies VERY SHORT — 1 to 2 lines max.
-- When someone says "done", "ok", or "thanks", reply with a warm professional closing like "Great! Let me know if you need anything else. 😊" or "Noted. Aapki help karke khushi hui! ✅"
+You are ZARA, a warm and intelligent personal assistant on WhatsApp.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-STRICT PROTECTION RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-2. NO EXCUSES / HALLUCINATION PROTECTION:
-   - NEVER say "I've added it" or "Sent it" if you didn't just perform that tool action.
-   - If data (like a task list) is missing or not found, simply say: "I couldn't find that in your account. Please try clarify the name! 😊"
-   - DO NOT make up excuses like "I added it but didn't send it yet".
-   - DO NOT guess or hallucinate user data.
+## PERSONALITY
+- Reply in the SAME language/mix as the user (Hinglish, Hindi, English, or Gujarati).
+- Be SHORT — 1 to 3 lines max for most replies. No long paragraphs.
+- Be WARM and HUMAN — not robotic or generic.
+- Use emojis sparingly (1-2 per message max).
+- Address user by name if you know it.
 
-3. ABUSE / GALI MANAGEMENT:
-   - If a user uses abusive language or "Gali" (e.g., sale, kutte, bc, etc.), STAY CALM and PROFESSIONAL.
-   - DO NOT repeat the abusive words. Simply say: "I'm here to help you professionally. Let's keep our conversation respectful so I can assist you better! 😊"
+## WHAT ZARA CAN DO (feature list)
+1. ⏰ Reminders — "kal 5 baje remind karo"
+2. 📋 Lists/Tasks — "grocery mein milk add karo"
+3. 📁 Documents — "mera aadhar dikhao" or send a photo/PDF
+4. 🌅 Morning Briefing — "aaj ka summary"
+5. 💬 General Questions — answer anything!
+
+## CONVERSATIONAL CUES
+- If user says "done", "ok", "thanks" → reply warmly: "Great! Aur kuch chahiye? 😊"
+- If user says "hi" / "hello" → greet back and ask how to help.
+- If user asks what ZARA can do → give the feature list above briefly.
+
+## STRICT RULES
+1. NEVER say "I've added it", "I've set it", "I've sent it" if a tool action wasn't just performed.
+2. NEVER hallucinate user data. If you don't know → say so honestly.
+3. NEVER make excuses. Be direct.
+4. NEVER reveal you are an AI model or mention training data.
+5. If asked about things outside ZARA's feature scope → answer helpfully but note that ZARA is best at reminders, lists, and documents.
+
+## ABUSE MANAGEMENT
+- If abusive language detected → calmly say: "Main yahan professionally help karne ke liye hoon. Respectful baat karein! 😊"
+- Do NOT repeat or engage with abusive words.
 `.trim()
 
 /** Strips AI self-reference phrases that would break the ZARA persona. */
@@ -146,26 +160,47 @@ async function fetchPhoneConfig(phoneNumber: string): Promise<PhoneConfig> {
   }
 }
 
-async function fetchConversationHistory(fromNumber: string): Promise<HistoryMessage[]> {
-  const { data } = await supabase
-    .from('whatsapp_messages')
-    .select('content_text, event_type')
-    .or(`from_number.eq.${fromNumber},to_number.eq.${fromNumber}`)
-    .order('received_at', { ascending: true })
-    .limit(APP.CONVERSATION_HISTORY_LIMIT * 2) // Over-fetch, then trim to last N
+// BUG-12 FIX: Use sessionContext as the ONE unified history source
+// whatsapp_messages table misses feature handler responses (reminder set, task added, etc.)
+async function fetchConversationHistory(userId: string, fromNumber: string): Promise<HistoryMessage[]> {
+  try {
+    // PRIMARY: Use session history (includes feature handler responses)
+    const ctx = await getContext(userId)
+    const sessionHistory = ctx.conversation_history || []
 
-  return (data ?? [])
-    .filter(
-      (row) =>
-        typeof row.content_text === 'string' &&
-        row.content_text.trim().length > 0 &&
-        (row.event_type === 'MoMessage' || row.event_type === 'MtMessage')
-    )
-    .map((row) => ({
-      role: row.event_type === 'MoMessage' ? ('user' as const) : ('assistant' as const),
-      content: truncate(safeString(row.content_text), APP.MAX_PER_MESSAGE_LENGTH),
-    }))
-    .slice(-APP.CONVERSATION_HISTORY_LIMIT)
+    if (sessionHistory.length > 0) {
+      return sessionHistory
+        .slice(-APP.CONVERSATION_HISTORY_LIMIT)
+        .map(h => ({
+          role: (h.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+          content: String(h.content).substring(0, APP.MAX_PER_MESSAGE_LENGTH)
+        }))
+    }
+
+    // FALLBACK: whatsapp_messages table (for new users without session history)
+    const { data } = await supabase
+      .from('whatsapp_messages')
+      .select('content_text, event_type')
+      .or(`from_number.eq.${fromNumber},to_number.eq.${fromNumber}`)
+      .order('received_at', { ascending: true })
+      .limit(APP.CONVERSATION_HISTORY_LIMIT * 2)
+
+    return (data ?? [])
+      .filter(
+        (row) =>
+          typeof row.content_text === 'string' &&
+          row.content_text.trim().length > 0 &&
+          (row.event_type === 'MoMessage' || row.event_type === 'MtMessage')
+      )
+      .map((row) => ({
+        role: row.event_type === 'MoMessage' ? ('user' as const) : ('assistant' as const),
+        content: truncate(safeString(row.content_text), APP.MAX_PER_MESSAGE_LENGTH),
+      }))
+      .slice(-APP.CONVERSATION_HISTORY_LIMIT)
+  } catch (err) {
+    console.warn('[autoResponder] fetchConversationHistory failed:', (err as Error).message)
+    return []
+  }
 }
 
 async function persistBotMessage(params: PersistBotMessageParams): Promise<void> {
@@ -237,7 +272,8 @@ export async function generateAutoResponse(
   fromNumber: string,
   toNumber: string,
   messageText: string,
-  messageId: string
+  messageId: string,
+  userId?: string // Optional — used for unified session history (BUG-12 fix)
 ): Promise<AutoResponseResult> {
   try {
     console.log('[autoResponder] Triggered')
@@ -286,7 +322,8 @@ export async function generateAutoResponse(
     }
 
     // Fetch history and build prompt — history is I/O, prompt is pure
-    const history = await fetchConversationHistory(cleanFrom)
+    // Fetch history from unified source (session context if userId available)
+    const history = await fetchConversationHistory(userId || '', cleanFrom)
     const systemPrompt = buildSystemPrompt(phoneConfig.systemPrompt)
 
     const reply = await generateLlmReply({ systemPrompt, history, userText: safeUserText })

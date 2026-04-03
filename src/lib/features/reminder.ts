@@ -16,20 +16,41 @@ const supabase = getSupabaseClient()
 // ─── TITLE CLEANER ────────────────────────────────────────────
 
 function cleanReminderTitle(raw: string): string {
-  const cleaned = raw
-    .replace(/\b(remind|reminder|yaad|dilana|dilao|set|karo|please|bhai|yaar)\b/gi, '')
-    .replace(/\b(kal|aaj|parso|subah|dopahar|shaam|raat|tonight|tomorrow|today)\b/gi, '')
-    .replace(/\b(bje|baje|am|pm|AM|PM|o'clock|oclock|baj[ey])\b/gi, '')
+  let cleaned = raw
+    // Action/instruction words
+    .replace(/\b(remind|reminder|yaad|dilana|dilao|set|karo|karna|please|bhai|yaar|mujhe|mein|ko|ka|ki|ke)\b/gi, '')
+    // Time context words
+    .replace(/\b(kal|aaj|parso|subah|dopahar|shaam|raat|tonight|tomorrow|today|cal)\b/gi, '')
+    .replace(/\b(bje|baje|bajey|am|pm|AM|PM|o'clock|oclock|baj[ey])\b/gi, '')
+    // Days of week
     .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
     .replace(/\b(somwar|mangalwar|budhwar|guruwar|shukrawar|shaniwar|raviwar)\b/gi, '')
+    // Months
     .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/gi, '')
+    // Structural Hinglish filler
+    .replace(/\b(mujhe|main|total|teen|char|ek|do|dusra|teesra|karne|hain|date|hai|aur|wala|wali|pe|par|laga|de|na)\b/gi, '')
+    // Time patterns
     .replace(/\b\d{1,2}:\d{2}\b/g, '')
     .replace(/\b\d{1,2}\s*bje\b/gi, '')
     .replace(/\b\d{1,2}\s*baje\b/gi, '')
+    .replace(/\b\d{1,2}\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
 
-  return cleaned.length > 2 ? cleaned : raw.trim()
+  // CRITICAL: Cap title length — no sentence-length titles allowed
+  if (cleaned.length > 50) {
+    cleaned = cleaned.substring(0, 50).replace(/\s+\S*$/, '').trim()
+  }
+
+  // If cleaning removed everything, take first 5 meaningful words from original
+  if (cleaned.length < 3) {
+    const words = raw.split(/\s+/).filter(w =>
+      w.length > 2 && !/^(mujhe|mein|karo|karna|set|please|bhai|kal|aaj|hai|ka|ki|ke|ko|do|na|ek|teen|total|hain)$/i.test(w)
+    )
+    cleaned = words.slice(0, 5).join(' ').trim()
+  }
+
+  return cleaned.length > 2 ? cleaned : 'Reminder'
 }
 
 // ─── SET REMINDER ─────────────────────────────────────────────
@@ -82,7 +103,7 @@ export async function handleSetReminder(params: {
       .select('id, scheduled_at')
       .eq('user_id', userId)
       .eq('status', 'pending')
-      .ilike('title', `%${title.substring(0, 20)}%`)
+      .ilike('title', `%${title.substring(0, 40)}%`)
       .gte('scheduled_at', new Date().toISOString())
       .limit(1)
 
@@ -113,12 +134,12 @@ export async function handleSetReminder(params: {
     return
   }
 
-  // Timezone Correction (IST to UTC)
+  // Store as UTC — parsed.date already has correct timezone from Groq (+05:30)
+  // JS Date.toISOString() automatically converts to UTC
+  // DO NOT manually subtract IST offset — that causes double-conversion bug
   let finalScheduledAt: string | null = null
   if (parsed.date) {
-    const istOffset = 5.5 * 60 * 60 * 1000
-    const utcDate = new Date(parsed.date.getTime() - istOffset)
-    finalScheduledAt = utcDate.toISOString()
+    finalScheduledAt = parsed.date.toISOString()
   }
 
   const { error } = await supabase

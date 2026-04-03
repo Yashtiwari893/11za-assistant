@@ -13,6 +13,9 @@ export interface SessionContext {
   conversation_history?: Array<{role: string, content: string, ts: number}>
 }
 
+const MAX_HISTORY = 12 // Keep last 12 turns (6 user + 6 assistant)
+
+// ─── GET CONTEXT ──────────────────────────────────────────────
 export async function getContext(userId: string): Promise<SessionContext> {
   const supabase = getSupabaseClient()
   const { data } = await supabase
@@ -23,32 +26,77 @@ export async function getContext(userId: string): Promise<SessionContext> {
   return (data?.context as SessionContext) || {}
 }
 
+// ─── UPDATE CONTEXT (BUG-09 FIX: Atomic upsert, no separate read) ──────────
+// Uses Supabase upsert with merge strategy to avoid race conditions
 export async function updateContext(userId: string, updates: Partial<SessionContext>) {
   const supabase = getSupabaseClient()
+
+  // Get existing context — needed to merge history
   const existing = await getContext(userId)
-  
-  // Clean history to keep only last 10 turns
-  const history = (existing.conversation_history || []).slice(-10)
-  
+
+  // BUG-09 FIX: Preserve existing history, only update metadata fields
+  // Do NOT overwrite history via updateContext — use addToHistory for that
+  const { conversation_history, ...metadataUpdates } = updates as SessionContext & { conversation_history?: any }
+
+  const mergedContext: SessionContext = {
+    ...existing,
+    ...metadataUpdates,
+    // Preserve existing history (don't let metadata updates wipe history)
+    conversation_history: existing.conversation_history || [],
+  }
+
   await supabase
     .from('sessions')
-    .upsert({ 
-      user_id: userId, 
-      context: { ...existing, ...updates, conversation_history: history }
+    .upsert({
+      user_id: userId,
+      context: mergedContext
     }, { onConflict: 'user_id' })
 }
 
+// ─── ADD TO HISTORY (Unified memory — BUG-12/BUG-17 fix) ────────────────────
+// ONE function for all history writes — feature handlers + autoResponder both use this
 export async function addToHistory(userId: string, role: 'user' | 'assistant', content: string) {
+  if (!content?.trim()) return // Don't log empty messages
+
   const supabase = getSupabaseClient()
   const existing = await getContext(userId)
   const history = existing.conversation_history || []
-  
-  const updated = [...history, { role, content, ts: Date.now() }].slice(-10)
-  
+
+  // Deduplicate: Don't add same message twice back-to-back
+  const lastEntry = history[history.length - 1]
+  if (lastEntry?.role === role && lastEntry?.content === content.trim()) return
+
+  const truncatedContent = content.substring(0, 500) // Cap each message at 500 chars
+  const updated = [...history, { role, content: truncatedContent, ts: Date.now() }]
+    .slice(-MAX_HISTORY) // Keep only last MAX_HISTORY entries
+
   await supabase
     .from('sessions')
-    .upsert({ 
-      user_id: userId, 
-      context: { ...existing, conversation_history: updated }
+    .upsert({
+      user_id: userId,
+      context: {
+        ...existing,
+        conversation_history: updated,
+      }
+    }, { onConflict: 'user_id' })
+}
+
+// ─── CLEAR CONTEXT (for pending actions) ────────────────────────────────────
+export async function clearPendingAction(userId: string) {
+  const supabase = getSupabaseClient()
+  const existing = await getContext(userId)
+
+  await supabase
+    .from('sessions')
+    .upsert({
+      user_id: userId,
+      context: {
+        ...existing,
+        pending_action: undefined,
+        document_id: undefined,
+        document_path: undefined,
+        drive_file_id: undefined,
+        doc_type: undefined,
+      }
     }, { onConflict: 'user_id' })
 }

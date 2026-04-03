@@ -240,25 +240,35 @@ export async function POST(req: NextRequest) {
       confidence: intentResult.confidence,
     })
 
-    // ─── KEYWORD-BASED INTENT OVERRIDE (Safety Net) ───────
-    // Recovery/Find override
-    if (lowerMessage.includes('dikhao') || lowerMessage.includes('show') || lowerMessage.includes('nikalo') || lowerMessage.includes('bhejo')) {
-      if (intentResult.intent === 'UNKNOWN' || intentResult.confidence < 0.8) {
+    // ─── SMART KEYWORD-BASED INTENT OVERRIDE (Safety Net) ────
+    // ONLY override to FIND_DOCUMENT if no task/reminder context present (BUG-05 fix)
+    const isTaskOrReminderContext = /\b(task|list|grocery|todo|kaam|saaman|reminder|reminders|yaad|tasks|lists)\b/i.test(lowerMessage)
+    const isDeleteContext = /\b(task|list|grocery|todo|tasks)\b/i.test(lowerMessage)
+
+    if (!isTaskOrReminderContext && (
+      lowerMessage.includes('dikhao') || lowerMessage.includes('show') ||
+      lowerMessage.includes('nikalo') || lowerMessage.includes('bhejo')
+    )) {
+      if (intentResult.intent === 'UNKNOWN' || intentResult.confidence < 0.7) {
         intentResult.intent = 'FIND_DOCUMENT'
-        intentResult.confidence = 0.99
+        intentResult.confidence = 0.85
       }
     }
 
-    // Deletion override
-    if (lowerMessage.includes('delete') || lowerMessage.includes('hatao') || lowerMessage.includes('mitao') || lowerMessage.includes('remove')) {
-      if (intentResult.intent === 'UNKNOWN' || intentResult.confidence < 0.8) {
+    // Deletion override — only for documents, not tasks/lists
+    if (!isDeleteContext && (
+      lowerMessage.includes('delete') || lowerMessage.includes('hatao') ||
+      lowerMessage.includes('mitao') || lowerMessage.includes('remove')
+    )) {
+      if (intentResult.intent === 'UNKNOWN' || intentResult.confidence < 0.7) {
         intentResult.intent = 'DELETE_DOCUMENT'
-        intentResult.confidence = 0.99
+        intentResult.confidence = 0.85
       }
     }
 
     // ─── ABUSE/GALI DETECTION ────────────────────────────
-    const abusePattern = /\b(kutte|bc|bhenchod|madarchod|mc|hrami|saale|sale|kamine|kutta)\b/i
+    // BUG-22: Removed 'sale' (shopping sale) from abuse list
+    const abusePattern = /\b(kutte|bc|bhenchod|madarchod|mc|hrami|saale|kamine|kutta)\b/i
     const hasAbuse = abusePattern.test(lowerMessage)
     let abuseWarning = ''
 
@@ -280,16 +290,33 @@ export async function POST(req: NextRequest) {
     try {
       switch (intent) {
         case 'SET_REMINDER':
-          // Pass abuseWarning to handleSetReminder so it can prepend if needed
-          await handleSetReminder({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            message: processedMessage,
-            dateTimeText: extractedData.dateTimeText || processedMessage,
-            reminderTitle: extractedData.reminderTitle || processedMessage,
-            prefix: abuseWarning
-          })
+          // BUG-04 FIX: Multi-reminder support
+          if (extractedData.isMultiReminder && Array.isArray(extractedData.reminderItems) && extractedData.reminderItems.length > 0) {
+            const results: string[] = []
+            for (const item of extractedData.reminderItems) {
+              await handleSetReminder({
+                userId: user.id,
+                phone: cleanFromPhone,
+                language: lang,
+                message: processedMessage,
+                dateTimeText: item.dateTimeText || processedMessage,
+                reminderTitle: item.title || 'Reminder',
+                prefix: abuseWarning
+              })
+              results.push(item.title || 'Reminder')
+            }
+            logger.info(`Multi-reminder: set ${results.length} reminders`, { userId: user.id })
+          } else {
+            await handleSetReminder({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              message: processedMessage,
+              dateTimeText: extractedData.dateTimeText || processedMessage,
+              reminderTitle: extractedData.reminderTitle || undefined,
+              prefix: abuseWarning
+            })
+          }
           isHandled = true
           break
 
@@ -298,6 +325,31 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
+          })
+          isHandled = true
+          break
+
+        // BUG-08 FIX: Added missing SNOOZE_REMINDER case
+        case 'SNOOZE_REMINDER':
+          await handleSnoozeReminder({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            minutes: extractedData.snoozeMinutes,
+            customText: extractedData.dateTimeText || undefined,
+            prefix: abuseWarning
+          })
+          isHandled = true
+          break
+
+        // BUG-08 FIX: Added missing CANCEL_REMINDER case
+        case 'CANCEL_REMINDER':
+          await handleCancelReminder({
+            userId: user.id,
+            phone: cleanFromPhone,
+            language: lang,
+            titleHint: extractedData.reminderTitle || undefined,
+            prefix: abuseWarning
           })
           isHandled = true
           break
@@ -365,18 +417,17 @@ export async function POST(req: NextRequest) {
               userId: user.id,
               phone: cleanFromPhone,
               language: lang,
-              query: extractedData?.documentQuery 
+              query: extractedData?.documentQuery
                 || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
                 || processedMessage,
             })
             if (foundDocId) {
-                // Tracking context
-                await updateContext(user.id, { last_referenced_id: foundDocId as string })
+              await updateContext(user.id, { last_referenced_id: foundDocId as string })
             }
             isHandled = true
           } catch (docErr) {
             logger.error('FindDocument internal fail', { userId: user.id }, docErr as Error)
-            isHandled = true 
+            isHandled = true
           }
           break
 
@@ -394,8 +445,8 @@ export async function POST(req: NextRequest) {
             userId: user.id,
             phone: cleanFromPhone,
             language: lang,
-            query: extractedData?.documentQuery 
-              || processedMessage.replace(/(delete|hatao|mitao|remove|remove karo|hata|delete)/gi, '').trim()
+            query: extractedData?.documentQuery
+              || processedMessage.replace(/(delete|hatao|mitao|remove|hata)/gi, '').trim()
               || processedMessage,
           })
           isHandled = true
@@ -415,28 +466,29 @@ export async function POST(req: NextRequest) {
           isHandled = true
           break
 
-        default: 
+        default:
           break
       }
 
-      // Background context update (non-blocking) - Enhanced with referenced ID
+      // ─── CONTEXT & HISTORY UPDATE ─────────────────────────
       if (isHandled) {
         try {
           await updateContext(user.id, {
             last_intent: intent,
             last_list_name: extractedData?.listName || ctx.last_list_name || undefined,
             last_document_query: extractedData?.documentQuery || ctx.last_document_query || undefined,
-            // If it was a generic search, we don't save a single ID
-            last_referenced_id: extractedData.lastReferencedId || ctx.last_referenced_id || undefined
+            last_referenced_id: extractedData?.lastReferencedId || ctx.last_referenced_id || undefined
           })
+          // BUG-17 FIX: Always log user message to history for feature handlers too
           await addToHistory(user.id, 'user', processedMessage)
         } catch (ctxErr) {
           logger.warn('Session context update failed (silent)', { userId: user.id, error: (ctxErr as Error).message })
         }
       } else {
-        // Not handled by any feature? Use Auto-Responder
-        const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+        // Not handled by any feature? Use Auto-Responder (pass userId for unified history)
+        const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId, user.id)
         if (autoResp.response) {
+          // BUG-17 FIX: Store full conversation turn in history
           await addToHistory(user.id, 'user', processedMessage)
           await addToHistory(user.id, 'assistant', autoResp.response)
         }

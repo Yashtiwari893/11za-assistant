@@ -65,14 +65,14 @@ function quickParse(text: string): ParsedDateTime | null {
   // Recurring: "har din" / "daily" / "everyday"
   if (/\b(har\s*din|daily|every\s*day|roz)\b/.test(lower)) {
     const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|bje|baje)?/)
-    const recurrenceTime = timeMatch ? extractTime(timeMatch) : '09:00'
+    const recurrenceTime = timeMatch ? extractTime(timeMatch, lower) : '09:00'
     return { ...EMPTY, isRecurring: true, recurrence: 'daily', recurrenceTime, confidence: 0.9, humanReadable: `Every day at ${recurrenceTime}` }
   }
 
   // Recurring: "har hafta" / "weekly"
   if (/\b(har\s*hafta|weekly|every\s*week)\b/.test(lower)) {
     const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|bje|baje)?/)
-    const recurrenceTime = timeMatch ? extractTime(timeMatch) : '09:00'
+    const recurrenceTime = timeMatch ? extractTime(timeMatch, lower) : '09:00'
     return { ...EMPTY, isRecurring: true, recurrence: 'weekly', recurrenceTime, confidence: 0.9, humanReadable: `Every week at ${recurrenceTime}` }
   }
 
@@ -85,14 +85,34 @@ function quickParse(text: string): ParsedDateTime | null {
   return null  // Groq pe jaao
 }
 
-function extractTime(match: RegExpMatchArray): string {
+function extractTime(match: RegExpMatchArray, fullText?: string): string {
   let hour = parseInt(match[1])
   const min = parseInt(match[2] ?? '0')
   const ampm = (match[3] ?? '').toLowerCase()
 
   if (ampm === 'pm' && hour < 12) hour += 12
   if (ampm === 'am' && hour === 12) hour = 0
-  // bje/baje — already 24hr format assume
+
+  // ─── SMART AM/PM INFERENCE for bje/baje (Indian context) ────
+  // When user says "2 baje" without am/pm, apply cultural defaults:
+  // - "subah" (morning) context → AM
+  // - "shaam/raat" context → PM
+  // - No context: 1-5 → PM (afternoon), 6-11 → AM (morning), 12 → PM
+  if (ampm === 'bje' || ampm === 'baje' || ampm === 'bajey' || !ampm) {
+    const lower = (fullText || '').toLowerCase()
+    const hasMorning = /\b(subah|morning|savere|pratah)\b/.test(lower)
+    const hasEvening = /\b(shaam|sham|evening|raat|night|dopahar|afternoon)\b/.test(lower)
+
+    if (hasMorning && hour <= 12) {
+      // Keep as-is (AM)
+    } else if (hasEvening && hour < 12) {
+      hour += 12
+    } else if (!hasMorning && !hasEvening) {
+      // Default Indian context: 1-5 = PM (afternoon), 6-11 = AM, 12 = PM
+      if (hour >= 1 && hour <= 5) hour += 12
+      // 6-11 stay as AM, 12 stays as PM (noon)
+    }
+  }
 
   return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`
 }
@@ -108,19 +128,29 @@ Expression: "${text}"
 Hindi/Hinglish reference:
 - kal = tomorrow | aaj = today | parso = day after tomorrow
 - subah = morning (default 9 AM) | dopahar = afternoon (2 PM) | shaam = evening (6 PM) | raat = night (9 PM)
-- bje / baje = o'clock — "5 bje" = 5:00, use context to pick AM/PM (shaam 5 bje = 17:00)
+- bje / baje = o'clock
 - somwar=Monday, mangalwar=Tuesday, budhwar=Wednesday, guruwar=Thursday, shukrawar=Friday, shaniwar=Saturday, raviwar=Sunday
 - har din = every day | har hafta = every week | har mahina = every month
 - har Sunday/Monday etc = weekly recurring on that day
+- "cal" = kal = tomorrow
+
+## CRITICAL AM/PM RULES (Indian Context)
+- If user says just a number like "2 baje" or "5 bje" WITHOUT am/pm:
+  - Hours 1-5 → default to PM (afternoon) unless "subah" is mentioned
+  - Hours 6-11 → default to AM (morning) unless "shaam/raat" is mentioned  
+  - 12 baje → default to PM (noon)
+- "subah 6 baje" = 6:00 AM | "shaam 6 baje" = 6:00 PM
+- "dopahar 2 baje" = 2:00 PM | "raat 9 baje" = 9:00 PM
+- ALWAYS output isoDateTime with +05:30 offset (IST)
 
 Output format:
 {
-  "isoDateTime": "2024-03-23T11:00:00+05:30",
+  "isoDateTime": "2024-03-23T14:00:00+05:30",
   "isRecurring": false,
   "recurrence": null,
   "recurrenceTime": null,
   "confidence": 0.95,
-  "humanReadable": "Tomorrow at 11:00 AM"
+  "humanReadable": "Tomorrow at 2:00 PM"
 }
 
 For recurring reminders:

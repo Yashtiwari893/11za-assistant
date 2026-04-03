@@ -27,16 +27,18 @@ const LANGUAGE_MAP: Record<string, Language> = {
 
 // ─── LOCAL FAST DETECTION ─────────────────────────────────────
 function detectLocally(text: string): Language | null {
-    // Script-based detection (most reliable)
+    // Script-based detection (most reliable — unicode script)
     if (GUJARATI_SCRIPT.test(text)) return 'gu'
     if (HINDI_SCRIPT.test(text)) return 'hi'
 
-    // Pure English
-    if (ENGLISH_ONLY.test(text)) return 'en'
-
-    // Word-based detection
+    // BUG-13 FIX: Check Hindi/Gujarati WORDS before ENGLISH_ONLY
+    // Hinglish is written in English alphabets but has Hindi words
+    // Previously ENGLISH_ONLY check fired first → returned 'en' for Hinglish
     if (GUJARATI_WORDS.test(text)) return 'gu'
     if (HINDI_WORDS.test(text)) return 'hi'
+
+    // Pure English (only after eliminating Hindi/Gujarati)
+    if (ENGLISH_ONLY.test(text)) return 'en'
 
     return null  // Confident detection nahi hua — Groq pe jao
 }

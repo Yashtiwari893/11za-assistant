@@ -508,7 +508,9 @@ export async function syncPendingDocumentsToDrive(userId: string) {
 function cleanLabel(raw?: string): string {
   if (!raw) return ''
   return raw
-    .replace(/\b(mera|meri|ka|ki|ke|save|karo|naam|label|please|bhai|document|photo|file|bill|aadhar|passport|license|licence|certificate|scan|copy|original)\b/gi, '')
+    // BUG-11 FIX: Only strip action/filler words — NOT document category words
+    // 'aadhar', 'passport', 'license', 'bill', 'certificate' are the LABELS users want!
+    .replace(/\b(mera|meri|ka|ki|ke|save|karo|naam|label|please|bhai|document|photo|file|scan|copy|original)\b/gi, '')
     .replace(/[^a-zA-Z0-9\s\u0900-\u097F_-]/g, '') // Keep hyphens and underscores
     .replace(/\s+/g, ' ')
     .trim()

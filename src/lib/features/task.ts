@@ -12,10 +12,15 @@ import type { Language } from '@/types'
 const supabase = getSupabaseClient()
 
 // ─── CONTENT CLEANER ──────────────────────────────────────────
-// Task content se filler words hata do
+// BUG-10 FIX: Only strip clear action/filler words using word boundaries
+// DO NOT strip: 'me', 'list', 'grocery', 'ki', 'ka' — these can be part of task names
+// "Medicine buy karo" was breaking to "dicine buy" with old regex
 function cleanTaskContent(raw: string): string {
   const cleaned = raw
-    .replace(/\b(add|karo|kar|do|please|bhai|yaar|mein|me|list|grocery|ko|ki|ka)\b/gi, '')
+    // Only unambiguous action words (not syllables that could be part of words)
+    .replace(/\b(add|karo|kar|please|bhai|yaar|mujhe|mein)\b/gi, '')
+    // Remove "mein/me" only when followed by a list indicator — not as a word fragment
+    .replace(/\s+mein\s+(daal|add|daalo|daalna)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
   return cleaned.length > 1 ? cleaned : raw.trim()

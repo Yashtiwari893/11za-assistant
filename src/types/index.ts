@@ -169,8 +169,13 @@ export interface IntentResult {
     reminderTitle?: string
     isMultiTask?: boolean
     taskItems?: string[]
-    isGenericSearch?: boolean // If user says "tasks" or "all"
-    lastReferencedId?: string // From context
+    isGenericSearch?: boolean       // If user says "tasks" or "all"
+    lastReferencedId?: string       // From context
+    // Multi-reminder support (BUG-04)
+    isMultiReminder?: boolean
+    reminderItems?: Array<{ title: string; dateTimeText: string }>
+    // Snooze support (BUG-08)
+    snoozeMinutes?: number
   }
 }
 

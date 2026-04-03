@@ -36,26 +36,33 @@ interface ChatResponse {
  * Build personalized system prompt based on user profile
  */
 function buildSystemPrompt(context: ChatContext): string {
-  const personality: Record<string, string> = {
-    en: 'You are a friendly, helpful personal assistant on WhatsApp. Be warm, human-like, and concise. Use emojis sparingly. If you don\'t know something, admit it.',
-    hi: 'आप एक दोस्ताना, सहायक WhatsApp सहायक हैं। गर्मजोशी से बात करें, मानवीय रहें। संक्षिप्त रहें। अगर कुछ पता नहीं है तो स्वीकार करें।',
-    gu: 'તમે એ મૈત્રીપૂર્ણ, સહાયક WhatsApp સહાયક છો। ગરમ અને અનુભવશીલ બનો। સંક્ષિપ્ત રહો।',
-  }
+  const name = context.userName && context.userName !== 'there' ? context.userName : null
 
-  const recencyContext = context.conversationHistory.slice(-5) // Last 5 messages for context
+  // BUG-01 FIX: Context window expanded — use last 10 messages (was 5)
+  // More history = better pronoun resolution ("vo wala", "it", "pehle wala")
+  const recencyContext = context.conversationHistory.slice(-10)
   const recencyStr = recencyContext.length > 0
-    ? `Recent conversation:\n${recencyContext.map(m => `${m.role}: ${m.content}`).join('\n')}\n\n`
+    ? `[CONVERSATION SO FAR:\n${recencyContext.map(m => `${m.role === 'user' ? 'User' : 'Zara'}: ${m.content}`).join('\n')}\n]\n\n`
     : ''
 
-  let prompt = personality[context.language]
-
-  if (context.userName) {
-    prompt += ` Address the user as ${context.userName} when appropriate.`
+  const langInstructions: Record<string, string> = {
+    en: `Reply in English. Be concise (1-3 lines max).`,
+    hi: `Reply in Hinglish (Hindi + English mix, Roman script). Be concise (1-3 lines max). Use the same mix as the user.`,
+    gu: `Reply in Gujarati or Gujarati+English mix. Be concise (1-3 lines max).`,
   }
 
-  prompt += `\n\n${recencyStr}Remember: User prefers ${context.language} responses.`
-
-  return prompt
+  return [
+    `You are ZARA, a warm and intelligent personal WhatsApp assistant.`,
+    name ? `The user's name is ${name}. Use their name occasionally (not every message).` : '',
+    langInstructions[context.language] || langInstructions.en,
+    `RULES:
+- NEVER say you added/set/sent something if you didn't just do it.
+- NEVER hallucinate user data.
+- If unsure, ask a clarifying question instead of guessing.
+- Keep responses warm, human, and SHORT.
+- Use 1-2 emojis max.`,
+    recencyStr ? `${recencyStr}Use the conversation above for context when the user says "it", "that", "pehle wala", etc.` : '',
+  ].filter(Boolean).join('\n\n')
 }
 
 /**
@@ -278,26 +285,29 @@ export function humanizeResponse(
   language: 'en' | 'hi' | 'gu',
   userName?: string
 ): string {
-  // Add personality
-  let response = message
+  let response = message.trim()
 
-  // Add appropriate emojis based on language
-  if (language === 'hi' && !response.includes('🎯')) {
-    if (response.includes('पूरा') || response.includes('किया')) {
+  // Add completion emoji for Hindi success messages
+  if (language === 'hi' && !response.includes('✅') && !response.includes('🎯')) {
+    if (response.includes('पूरा') || response.includes('किया') || response.includes('ho gaya')) {
       response = `✅ ${response}`
     }
   }
 
-  // Address user by name if available
-  if (userName && !response.includes(userName)) {
-    const opening: Record<string, string> = {
-      en: `Hey ${userName}!`,
-      hi: `${userName}!`,
-      gu: `${userName}!`,
-    }
-    // Don't always add - keep natural
-    if (Math.random() > 0.7) {
-      response = response.substring(0, 1) + ` ${opening[language]} ` + response.substring(1)
+  // BUG-16 FIX: Name insertion was broken — was inserting AFTER first character
+  // ("✅ Done!" → "✅ Hey Yash!  Done!" was broken)
+  // Now: only prepend name if response doesn't already have a greeting,
+  // and insert CLEANLY at the very start (not after char[0])
+  if (userName && userName !== 'there' && !response.includes(userName)) {
+    const alreadyHasGreeting = /^(hey|hi|hello|namaste|arre|haan|ok)/i.test(response)
+    // Only 30% of the time — keep it natural, not repetitive
+    if (!alreadyHasGreeting && Math.random() > 0.7) {
+      const prefix: Record<string, string> = {
+        en: `${userName}, `,
+        hi: `${userName}, `,
+        gu: `${userName}, `,
+      }
+      response = `${prefix[language] || `${userName}, `}${response}`
     }
   }
 
