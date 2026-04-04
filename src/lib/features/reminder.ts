@@ -5,13 +5,14 @@ import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { parseDateTime } from '@/lib/ai/dateParser'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import {
-  reminderSet, reminderList, reminderSnoozed, errorMessage,
+  reminderSet, reminderSnoozed, errorMessage,
 } from '@/lib/whatsapp/templates'
 import { truncateWhatsAppMessage } from '@/lib/whatsapp/message'
 import type { Language } from '@/types'
 import { APP } from '@/config'
 
 const supabase = getSupabaseClient()
+const DUPLICATE_TIME_WINDOW_MS = 10 * 60 * 1000
 
 // ─── TITLE CLEANER ────────────────────────────────────────────
 
@@ -100,15 +101,20 @@ export async function handleSetReminder(params: {
   if (parsed.date) {
     const { data: existing } = await supabase
       .from('reminders')
-      .select('id, scheduled_at')
+      .select('id, title, scheduled_at')
       .eq('user_id', userId)
       .eq('status', 'pending')
       .ilike('title', `%${title.substring(0, 40)}%`)
       .gte('scheduled_at', new Date().toISOString())
-      .limit(1)
+      .limit(25)
 
-    if (existing && existing.length > 0) {
-      const existingTime = new Date(existing[0].scheduled_at).toLocaleString('en-IN', {
+    const duplicate = (existing || []).find((r) => {
+      const ts = new Date(r.scheduled_at).getTime()
+      return Math.abs(ts - parsed.date!.getTime()) <= DUPLICATE_TIME_WINDOW_MS
+    })
+
+    if (duplicate) {
+      const existingTime = new Date(duplicate.scheduled_at).toLocaleString('en-IN', {
         timeZone: APP.DEFAULT_TIMEZONE,
         dateStyle: 'medium',
         timeStyle: 'short'

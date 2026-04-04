@@ -94,6 +94,29 @@ async function getLatestOutgoingReply(fromNumber: string, toNumber: string): Pro
   return typeof latest === 'string' && latest.trim().length > 0 ? latest : null
 }
 
+function extractMultiReminderFallbackItems(message: string): Array<{ title: string; dateTimeText: string }> {
+  const dayMatch = message.match(/\b(kal|tomorrow|aaj|today|parso)\b/i)
+  const dayPrefix = dayMatch ? dayMatch[1] : ''
+  const seen = new Set<string>()
+
+  const timeMatches = message.match(/\b(?:subah|dopahar|shaam|sham|raat)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|baje|bje)?\b/gi) || []
+
+  const slots = timeMatches
+    .map((s) => s.trim())
+    .filter((s) => /\d/.test(s))
+    .filter((s) => {
+      const key = s.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+  return slots.map((slot, index) => ({
+    title: `Reminder ${index + 1}`,
+    dateTimeText: dayPrefix ? `${dayPrefix} ${slot}` : slot,
+  }))
+}
+
 export async function POST(req: NextRequest) {
   // ─── TRACE ID & LOGGING ────────────────────────────────
   const traceId = uuid()
@@ -325,18 +348,27 @@ export async function POST(req: NextRequest) {
         case 'SET_REMINDER':
           // BUG-04 FIX: Multi-reminder support
           if (extractedData.isMultiReminder && Array.isArray(extractedData.reminderItems) && extractedData.reminderItems.length > 0) {
+            const fallbackItems = extractMultiReminderFallbackItems(processedMessage)
+            const llmItems = extractedData.reminderItems
+              .map((item, index) => ({
+                title: item.title?.trim() || `Reminder ${index + 1}`,
+                dateTimeText: item.dateTimeText?.trim() || ''
+              }))
+              .filter((item) => item.dateTimeText.length > 0)
+
+            const reminderItems = fallbackItems.length >= llmItems.length ? fallbackItems : llmItems
             const results: string[] = []
-            for (const item of extractedData.reminderItems) {
+            for (const item of reminderItems) {
               await handleSetReminder({
                 userId: user.id,
                 phone: cleanFromPhone,
                 language: lang,
                 message: processedMessage,
                 dateTimeText: item.dateTimeText || processedMessage,
-                reminderTitle: item.title || 'Reminder',
+                reminderTitle: item.title,
                 prefix: abuseWarning
               })
-              results.push(item.title || 'Reminder')
+              results.push(item.title)
             }
             logger.info(`Multi-reminder: set ${results.length} reminders`, { userId: user.id })
           } else {
