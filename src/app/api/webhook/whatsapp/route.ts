@@ -40,20 +40,58 @@ function resolveMimeType(rawMime?: string | null, subType?: string | null): stri
   return 'image/jpeg'
 }
 
-function parseWebhookPayload(body: any) {
-  return {
-    phone: body?.from || '',
-    to: body?.to || '',
-    message: body?.content?.text || body?.content?.media?.caption || '',
-    buttonId: body?.content?.button_id || null,
-    mediaUrl: body?.content?.media?.url || null,
-    mediaType: body?.content?.contentType || 'text',
-    mimeType: body?.content?.media?.mimeType || body?.content?.media?.mime_type || null,
-    subType: body?.content?.media?.type || null,
-    messageId: body?.messageId || '',
-    name: body?.whatsapp?.senderName || null,
-    event: body?.event || 'MoMessage'
+interface ParsedWebhookBody {
+  from?: string
+  to?: string
+  messageId?: string
+  event?: string
+  whatsapp?: { senderName?: string | null }
+  content?: {
+    text?: string
+    button_id?: string | null
+    contentType?: string
+    media?: {
+      caption?: string
+      url?: string
+      mimeType?: string
+      mime_type?: string
+      type?: string
+    }
   }
+}
+
+function parseWebhookPayload(body: unknown) {
+  const payload = (body ?? {}) as ParsedWebhookBody
+  return {
+    phone: payload.from || '',
+    to: payload.to || '',
+    message: payload.content?.text || payload.content?.media?.caption || '',
+    buttonId: payload.content?.button_id || null,
+    mediaUrl: payload.content?.media?.url || null,
+    mediaType: payload.content?.contentType || 'text',
+    mimeType: payload.content?.media?.mimeType || payload.content?.media?.mime_type || null,
+    subType: payload.content?.media?.type || null,
+    messageId: payload.messageId || '',
+    name: payload.whatsapp?.senderName || null,
+    event: payload.event || 'MoMessage'
+  }
+}
+
+async function getLatestOutgoingReply(fromNumber: string, toNumber: string): Promise<string | null> {
+  const windowStart = new Date(Date.now() - 60_000).toISOString()
+
+  const { data } = await supabaseAdmin
+    .from('whatsapp_messages')
+    .select('content_text')
+    .eq('event_type', 'MtMessage')
+    .eq('from_number', fromNumber)
+    .eq('to_number', toNumber)
+    .gte('received_at', windowStart)
+    .order('received_at', { ascending: false })
+    .limit(1)
+
+  const latest = data?.[0]?.content_text
+  return typeof latest === 'string' && latest.trim().length > 0 ? latest : null
 }
 
 export async function POST(req: NextRequest) {
@@ -80,7 +118,7 @@ export async function POST(req: NextRequest) {
     try {
       cleanFromPhone = validatePhone(phone)
       cleanToPhone = validatePhone(to)
-    } catch (err) {
+    } catch {
       logger.warn('Invalid phone format', { phone, to })
       return NextResponse.json({ ok: true })
     }
@@ -124,7 +162,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── GET OR CREATE USER (with retries) ─────────────────
-    let user = await retryWithExponentialBackoff(
+    const user = await retryWithExponentialBackoff(
       () => getOrCreateUser(cleanFromPhone, name),
       3
     )
@@ -138,7 +176,7 @@ export async function POST(req: NextRequest) {
     if (name && !user.name) {
       try {
         await supabaseAdmin.from('users').update({ name: validatePlainText(name, 100) }).eq('id', user.id)
-      } catch (err) {
+      } catch {
         logger.warn('Failed to update user name', { userId: user.id })
       }
     }
@@ -281,11 +319,6 @@ export async function POST(req: NextRequest) {
     // ─── ROUTE TO FEATURE HANDLERS ────────────────────────
     let isHandled = false
     const { intent, extractedData } = intentResult
-
-    // Helper to send message with optional abuse warning
-    const sendReply = async (msg: string) => {
-      await sendWhatsAppMessage({ to: cleanFromPhone, message: abuseWarning + msg })
-    }
 
     try {
       switch (intent) {
@@ -481,6 +514,12 @@ export async function POST(req: NextRequest) {
           })
           // BUG-17 FIX: Always log user message to history for feature handlers too
           await addToHistory(user.id, 'user', processedMessage)
+
+          // Keep assistant side in session history as well so LLM gets full turn-by-turn context.
+          const latestReply = await getLatestOutgoingReply(cleanToPhone, cleanFromPhone)
+          if (latestReply) {
+            await addToHistory(user.id, 'assistant', latestReply)
+          }
         } catch (ctxErr) {
           logger.warn('Session context update failed (silent)', { userId: user.id, error: (ctxErr as Error).message })
         }
@@ -508,7 +547,7 @@ export async function POST(req: NextRequest) {
 
       if (!isHandled) {
         try {
-          await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId)
+          await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId, user.id)
         } catch (fallbackErr) {
           logger.error('Auto-responder fail', fallbackErr as Error)
         }

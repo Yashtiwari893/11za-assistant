@@ -69,14 +69,6 @@ interface HistoryMessage {
   content: string
 }
 
-interface PersistBotMessageParams {
-  botMessageId: string
-  fromNumber: string
-  toNumber: string
-  replyText: string
-  originalMessageId: string
-}
-
 interface GenerateLlmReplyParams {
   systemPrompt: string
   history: HistoryMessage[]
@@ -162,11 +154,12 @@ async function fetchPhoneConfig(phoneNumber: string): Promise<PhoneConfig> {
 
 // BUG-12 FIX: Use sessionContext as the ONE unified history source
 // whatsapp_messages table misses feature handler responses (reminder set, task added, etc.)
-async function fetchConversationHistory(userId: string, fromNumber: string): Promise<HistoryMessage[]> {
+async function fetchConversationHistory(userId: string | undefined, fromNumber: string): Promise<HistoryMessage[]> {
   try {
     // PRIMARY: Use session history (includes feature handler responses)
-    const ctx = await getContext(userId)
-    const sessionHistory = ctx.conversation_history || []
+    const sessionHistory = userId
+      ? ((await getContext(userId)).conversation_history || [])
+      : []
 
     if (sessionHistory.length > 0) {
       return sessionHistory
@@ -200,33 +193,6 @@ async function fetchConversationHistory(userId: string, fromNumber: string): Pro
   } catch (err) {
     console.warn('[autoResponder] fetchConversationHistory failed:', (err as Error).message)
     return []
-  }
-}
-
-async function persistBotMessage(params: PersistBotMessageParams): Promise<void> {
-  const { botMessageId, fromNumber, toNumber, replyText, originalMessageId } = params
-
-  const { error } = await supabase.from('whatsapp_messages').insert({
-    message_id: botMessageId,
-    channel: 'whatsapp',
-    from_number: fromNumber,
-    to_number: toNumber,
-    received_at: new Date().toISOString(),
-    content_type: 'text',
-    content_text: replyText,
-    sender_name: APP.BOT_SENDER_NAME,
-    event_type: 'MtMessage',
-    is_in_24_window: true,
-    raw_payload: {
-      source: 'auto_responder',
-      bot_response: true,
-      original_id: originalMessageId,
-    },
-  })
-
-  if (error) {
-    // Message was already delivered — log but don't fail the request.
-    console.warn('[autoResponder] Bot message persist failed:', error)
   }
 }
 
@@ -323,7 +289,7 @@ export async function generateAutoResponse(
 
     // Fetch history and build prompt — history is I/O, prompt is pure
     // Fetch history from unified source (session context if userId available)
-    const history = await fetchConversationHistory(userId || '', cleanFrom)
+    const history = await fetchConversationHistory(userId, cleanFrom)
     const systemPrompt = buildSystemPrompt(phoneConfig.systemPrompt)
 
     const reply = await generateLlmReply({ systemPrompt, history, userText: safeUserText })
@@ -346,19 +312,8 @@ export async function generateAutoResponse(
       return { success: false, response: reply, sent: false, error: 'WhatsApp send failed' }
     }
 
-    const botMessageId = `auto_${messageId}_${Date.now()}`
-
-    // Persist the bot's outgoing message and mark the original as handled — run in parallel.
-    await Promise.all([
-      persistBotMessage({
-        botMessageId,
-        fromNumber: cleanTo,
-        toNumber: cleanFrom,
-        replyText: reply,
-        originalMessageId: messageId,
-      }),
-      markMessageAsResponded(messageId),
-    ])
+    // Outgoing message is persisted by sendWhatsAppMessage wrapper.
+    await markMessageAsResponded(messageId)
 
     console.log('[autoResponder] Response sent successfully')
 
