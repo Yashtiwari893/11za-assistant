@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
-import { getOpenAIClient } from '@/lib/ai/clients'
-import { AI_MODELS } from '@/config'
 
 const supabaseAdmin = getSupabaseClient()
 
@@ -29,28 +27,22 @@ export async function POST(req: NextRequest) {
     const base64 = Buffer.from(arrayBuffer).toString('base64')
     const mimeType = image.type
 
-    // Call OpenAI for Vision-based OCR
-    const openai = getOpenAIClient()
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Extract all text from this image and return it as markdown. Maintain the structure and tables if any. Return only the extracted text, no conversational filler." },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeType};base64,${base64}`,
-              },
-            },
-          ],
-        },
-      ],
-      max_tokens: 2000,
-    })
+    // Call Gemini OCR
+    const { getGeminiClient } = await import('@/lib/ai/clients')
+    const gemini = getGeminiClient()
+    const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash' })
 
-    const extractedText = response.choices[0]?.message?.content?.trim() || ''
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          data: base64,
+          mimeType: mimeType
+        }
+      },
+      'Extract all text from this image faithfully. If it is a document, maintain the structure. Use markdown if helpful.'
+    ])
+
+    const extractedText = result.response.text() || ''
 
     if (!shouldStore || !extractedText) {
       return NextResponse.json({ text: extractedText, stored: false })

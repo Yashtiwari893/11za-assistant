@@ -2,7 +2,7 @@
 // Natural Language Date/Time Parser — Production-grade
 // "kal 11 bje", "har Sunday 9am", "parso shaam" → JavaScript Date
 
-import { getOpenAIClient } from '@/lib/ai/clients'
+import { getGeminiClient } from '@/lib/ai/clients'
 import { AI_MODELS, APP } from '@/config'
 
 const DEFAULT_TZ = APP.DEFAULT_TIMEZONE
@@ -27,7 +27,7 @@ const EMPTY: ParsedDateTime = {
 }
 
 // ─── LOCAL QUICK PARSE ────────────────────────────────────────
-// Common patterns detect karo without OpenAI API call
+// Common patterns detect karo without Groq API call
 function quickParse(text: string): ParsedDateTime | null {
   const lower = text.toLowerCase().trim()
   const now = new Date()
@@ -82,7 +82,7 @@ function quickParse(text: string): ParsedDateTime | null {
     return { ...EMPTY, isRecurring: true, recurrence: 'monthly', recurrenceTime, confidence: 0.85, humanReadable: `Every month` }
   }
 
-  return null  // OpenAI pe jaao
+  return null  // Groq pe jaao
 }
 
 function extractTime(match: RegExpMatchArray, fullText?: string): string {
@@ -180,7 +180,7 @@ export async function parseDateTime(
   const quick = quickParse(cleanText)
   if (quick && quick.confidence >= 0.9) return quick
 
-  // ── Step 2: OpenAI NLU parse ─────────────────────────────────
+  // ── Step 2: Gemini NLU parse ─────────────────────────────────
   const now = new Date()
   const nowIST = new Intl.DateTimeFormat('en-IN', {
     timeZone: userTimezone,
@@ -189,18 +189,20 @@ export async function parseDateTime(
   }).format(now)
 
   try {
-    const response = await getOpenAIClient().chat.completions.create({
-      model: AI_MODELS.DATE_PARSER,
-      max_tokens: 200,
-      temperature: 0.05,              // Very low — deterministic output
-      response_format: { type: 'json_object' },
-      messages: [{
-        role: 'user',
-        content: buildPrompt(cleanText, nowIST, userTimezone)
-      }]
+    const gemini = getGeminiClient()
+    const model = gemini.getGenerativeModel({ 
+        model: AI_MODELS.DATE_PARSER,
+        generationConfig: {
+            temperature: 0.05,
+            maxOutputTokens: 200,
+            responseMimeType: "application/json"
+        }
     })
 
-    const raw = response.choices[0]?.message?.content ?? ''
+    const prompt = buildPrompt(cleanText, nowIST, userTimezone)
+    
+    const result = await model.generateContent(prompt)
+    const raw = result.response.text()
     const parsed = JSON.parse(raw)
 
     // ── GUARDRAIL 3: Validate parsed result ───────────────────
@@ -212,7 +214,7 @@ export async function parseDateTime(
       const fiveMinAgo = new Date(now.getTime() - 5 * 60_000)
 
       if (parsedDate < fiveMinAgo) {
-        // OpenAI ne past time parse kiya — tomorrow assume karo
+        // Groq ne past time parse kiya — tomorrow assume karo
         console.warn('[dateParser] Past time parsed — adjusting to tomorrow')
         parsedDate.setDate(parsedDate.getDate() + 1)
       }
@@ -248,11 +250,11 @@ export async function parseDateTime(
     // ── GUARDRAIL 7: JSON parse fail ─────────────────────────
     const error = err instanceof Error ? err : new Error('Unknown error')
     if (error instanceof SyntaxError) {
-      console.error('[dateParser] JSON parse failed — OpenAI returned invalid JSON')
+      console.error('[dateParser] JSON parse failed — Groq returned invalid JSON')
     } else if (typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 429) {
-      console.warn('[dateParser] OpenAI rate limited')
+      console.warn('[dateParser] Groq rate limited')
     } else {
-      console.error('[dateParser] OpenAI parsing failed:', error.message)
+      console.error('[dateParser] Groq parsing failed:', error.message)
     }
 
     return { ...EMPTY, humanReadable: cleanText }

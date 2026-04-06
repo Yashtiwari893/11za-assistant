@@ -2,8 +2,8 @@
 // Centralized AI client singletons — prevents multiple instantiations
 
 import Groq from 'groq-sdk'
-import OpenAI from 'openai'
-import { GROQ_API_KEY, OPENAI_API_KEY } from '@/config'
+import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GROQ_API_KEY, GEMINI_API_KEY } from '@/config'
 
 // ─── Groq Client (Singleton) ─────────────────────────────────
 
@@ -19,16 +19,16 @@ export function getGroqClient(): Groq {
   return groqInstance
 }
 
-// ─── OpenAI Client (Singleton) ───────────────────────────────
+// ─── Gemini Client (Singleton) ───────────────────────────────
 
-let openaiInstance: OpenAI | null = null
+let geminiInstance: GoogleGenerativeAI | null = null
 
-export function getOpenAIClient(): OpenAI {
-  if (!openaiInstance) {
-    if (!OPENAI_API_KEY) {
-      throw new Error('OPENAI_API_KEY is not configured')
+export function getGeminiClient(): GoogleGenerativeAI {
+  if (!geminiInstance) {
+    if (!GEMINI_API_KEY) {
+      throw new Error('GEMINI_API_KEY is not configured')
     }
-    openaiInstance = new OpenAI({ apiKey: OPENAI_API_KEY })
+    geminiInstance = new GoogleGenerativeAI(GEMINI_API_KEY)
   }
-  return openaiInstance
+  return geminiInstance
 }

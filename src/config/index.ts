@@ -23,9 +23,9 @@ export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 // ─── AI Providers ─────────────────────────────────────────────
 
-export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 export const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 export const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || ''
+export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
 
 // ─── WhatsApp / 11za ──────────────────────────────────────────
 
@@ -62,15 +62,16 @@ export const WEBHOOK_VERIFY_TOKEN = optionalEnv('WEBHOOK_VERIFY_TOKEN')
 // ─── AI Model Configuration ──────────────────────────────────
 
 export const AI_MODELS = {
-  INTENT_CLASSIFIER: 'gpt-4o-mini',
-  DATE_PARSER: 'gpt-4o-mini',
-  AUTO_RESPONDER: 'gpt-4o-mini',
-  CHAT_PRIMARY: 'gpt-4o-mini',
-  CHAT_FALLBACK: 'gpt-4o-mini',
-  LANGUAGE_DETECT: 'gpt-4o-mini',
-  SYSTEM_PROMPT_GEN: 'gpt-4o-mini',
-  SENTIMENT: 'gpt-4o-mini',
-  STT: 'whisper-1',
+  INTENT_CLASSIFIER: 'gemini-2.0-flash',
+  DATE_PARSER: 'gemini-2.0-flash',
+  AUTO_RESPONDER: 'gemini-2.0-flash',
+  CHAT_PRIMARY: 'gemini-2.0-flash',
+  CHAT_FALLBACK: 'gemini-2.0-flash',
+  LANGUAGE_DETECT: 'gemini-2.0-flash',
+  SYSTEM_PROMPT_GEN: 'gemini-2.0-flash',
+  SENTIMENT: 'gemini-2.0-flash',
+  STT: 'whisper-large-v3', // Keeping Whisper via Groq if still available, or use Gemini if STT is needed. Gemini actually supports audio input now.
+  EMBEDDING: 'text-embedding-004',
 } as const
 
 // ─── Application Constants ────────────────────────────────────

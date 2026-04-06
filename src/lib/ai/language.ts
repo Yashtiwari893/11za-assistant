@@ -1,7 +1,7 @@
 // src/lib/language.ts
-// Language Detection — Fast local first, Groq fallback
+// Language Detection — Fast local first, Gemini fallback
 
-import { getOpenAIClient } from '@/lib/ai/clients'
+import { getGeminiClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import type { Language } from '@/types'
 
@@ -14,7 +14,7 @@ const HINDI_SCRIPT = /[\u0900-\u097F]/  // Devanagari Unicode range
 const ENGLISH_ONLY = /^[a-zA-Z0-9\s.,!?'"@#$%&*()\-_+=:;<>/\\[\]{}|~`]+$/
 
 // ─── LANGUAGE MAP ─────────────────────────────────────────────
-// Groq response → our Language type
+// Gemini response → our Language type
 const LANGUAGE_MAP: Record<string, Language> = {
     'english': 'en',
     'hindi': 'hi',
@@ -40,7 +40,7 @@ function detectLocally(text: string): Language | null {
     // Pure English (only after eliminating Hindi/Gujarati)
     if (ENGLISH_ONLY.test(text)) return 'en'
 
-    return null  // Confident detection nahi hua — Groq pe jao
+    return null  // Confident detection nahi hua — Gemini pe jao
 }
 
 // ─── MAIN: DETECT LANGUAGE ────────────────────────────────────
@@ -59,25 +59,21 @@ export async function detectLanguage(text: string): Promise<Language> {
         return localResult
     }
 
-    // ── Step 2: OpenAI fallback for ambiguous text ───────────────
+    // ── Step 2: Gemini fallback for ambiguous text ───────────────
     try {
-        const completion = await getOpenAIClient().chat.completions.create({
+        const gemini = getGeminiClient()
+        const model = gemini.getGenerativeModel({ 
             model: AI_MODELS.LANGUAGE_DETECT,
-            temperature: 0,
-            max_tokens: 10,                 // Sirf language name chahiye
-            messages: [
-                {
-                    role: 'system',
-                    content: 'Detect the language of the text. Reply with ONLY one word: "english", "hindi", or "gujarati". Nothing else.'
-                },
-                {
-                    role: 'user',
-                    content: cleanText.substring(0, 200)  // Pura text nahi — 200 chars kaafi
-                }
-            ]
+            generationConfig: {
+                temperature: 0,
+                maxOutputTokens: 10,
+            }
         })
 
-        const raw = completion.choices?.[0]?.message?.content
+        const prompt = `Detect the language of the text below. Reply with ONLY one word: "english", "hindi", or "gujarati". Nothing else.\n\nText: ${cleanText.substring(0, 200)}`
+        
+        const result = await model.generateContent(prompt)
+        const raw = result.response.text()
             ?.toLowerCase()
             ?.trim()
             ?.replace(/[^a-z]/g, '')  // Sirf letters
@@ -95,13 +91,9 @@ export async function detectLanguage(text: string): Promise<Language> {
         return 'en'  // Safe default
 
     } catch (err: unknown) {
-        // ── GUARDRAIL 4: OpenAI rate limit ────────────────────────
+        // ── GUARDRAIL 4: Gemini failure ────────────────────────
         const error = err as { status?: number; message?: string }
-        if (error?.status === 429) {
-            console.warn('[detectLanguage] Rate limited — defaulting to en')
-        } else {
-            console.error('[detectLanguage] OpenAI failed:', error?.message)
-        }
+        console.error('[detectLanguage] Gemini failed:', error?.message)
         return 'en'  // Always safe fallback
     }
 }

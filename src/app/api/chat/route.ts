@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseClient } from "@/lib/infrastructure/database"
-import { getOpenAIClient } from "@/lib/ai/clients"
+import { getGroqClient } from "@/lib/ai/clients"
 import { AI_MODELS } from "@/config"
 
 const supabaseAdmin = getSupabaseClient()
@@ -28,8 +28,8 @@ export async function POST(req: NextRequest) {
     // Note: We use the context from the PDF file provided
     const userPrompt = `Context from PDF file:\n${context}\n\nUser Question: ${message}`
 
-    // 3. Stream from OpenAI
-    const completion = await getOpenAIClient().chat.completions.create({
+    // 3. Stream from Groq (llama-3.3-70b-versatile)
+    const completion = await getGroqClient().chat.completions.create({
       model: AI_MODELS.CHAT_FALLBACK,
       messages: [
         { role: "system", content: "You are a helpful assistant. Use ONLY the provided context to answer questions. If info is missing, say you don't know." },

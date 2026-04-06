@@ -1,7 +1,7 @@
 // src/lib/speechToText.ts
-// Voice Note → Text using OpenAI Whisper — Production-grade
+// Voice Note → Text using Groq Whisper — Production-grade
 
-import { getOpenAIClient } from '@/lib/ai/clients'
+import { getGroqClient } from '@/lib/ai/clients'
 import { AI_MODELS, APP, SUPPORTED_AUDIO_FORMATS } from '@/config'
 import fs from 'fs'
 import path from 'path'
@@ -77,16 +77,25 @@ export async function speechToText(audioUrl: string, authToken?: string): Promis
             return null
         }
 
-        // ── OpenAI Whisper transcription ────────────────────────────
-        const transcription = await getOpenAIClient().audio.transcriptions.create({
-            file: fs.createReadStream(audioPath),
-            model: AI_MODELS.STT,
-        })
+        // ── Gemini transcription ────────────────────────────
+        const { getGeminiClient } = await import('@/lib/ai/clients')
+        const gemini = getGeminiClient()
+        const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash' })
+
+        const result = await model.generateContent([
+          {
+            inlineData: {
+              data: buffer.toString('base64'),
+              mimeType: contentType || 'audio/ogg'
+            }
+          },
+          'Transcribe this audio. Return ONLY the transcription text. No explanation.'
+        ])
 
         cleanup(audioPath)
         audioPath = null
 
-        const text = transcription.text?.trim()
+        const text = result.response.text()?.trim()
 
         // ── GUARDRAIL 6: Empty transcription ──────────────────────
         if (!text || text.length === 0) {
@@ -110,7 +119,7 @@ export async function speechToText(audioUrl: string, authToken?: string): Promis
         return { text, language }
 
     } catch (err) {
-        console.error('[STT] OpenAI Whisper failed:', err)
+        console.error('[STT] Groq Whisper failed:', err)
         if (audioPath) cleanup(audioPath)
         return null
     }
