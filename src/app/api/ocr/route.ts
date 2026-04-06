@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
+import { getClaudeClient } from '@/lib/ai/clients'
+import { AI_MODELS } from '@/config'
 
 const supabaseAdmin = getSupabaseClient()
 
@@ -22,24 +24,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Only JPG, PNG, WEBP, HEIC images supported' }, { status: 400 })
     }
 
-    // Convert to base64 for Mistral OCR
+    // Convert to base64 for Claude Vision
     const arrayBuffer = await image.arrayBuffer()
     const base64 = Buffer.from(arrayBuffer).toString('base64')
     const mimeType = image.type
 
-    // Call Mistral OCR
-    const Mistral = (await import('@mistralai/mistralai')).Mistral
-    const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY! })
-
-    const ocrResponse = await mistral.ocr.process({
-      model: 'mistral-ocr-latest',
-      document: {
-        type: 'image_url',
-        imageUrl: `data:${mimeType};base64,${base64}`
-      }
+    // Call Claude Vision
+    const claude = getClaudeClient()
+    const response = await claude.messages.create({
+      model: AI_MODELS.CHAT_PRIMARY,
+      max_tokens: 2048,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mimeType as any,
+                data: base64,
+              },
+            },
+            {
+              type: 'text',
+              text: 'Transcribe all the text in this image accurately. Return only the markdown with no extra conversational filler.',
+            },
+          ],
+        },
+      ],
     })
 
-    const extractedText = ocrResponse.pages?.map((p: any) => p.markdown || p.text || '').join('\n\n') || ''
+    const extractedText = response.content[0].type === 'text' ? response.content[0].text : ''
 
     if (!shouldStore || !extractedText) {
       return NextResponse.json({ text: extractedText, stored: false })
