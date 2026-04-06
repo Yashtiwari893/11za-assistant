@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
+import { getOpenAIClient } from '@/lib/ai/clients'
+import { AI_MODELS } from '@/config'
 
 const supabaseAdmin = getSupabaseClient()
 
@@ -27,19 +29,28 @@ export async function POST(req: NextRequest) {
     const base64 = Buffer.from(arrayBuffer).toString('base64')
     const mimeType = image.type
 
-    // Call Mistral OCR
-    const Mistral = (await import('@mistralai/mistralai')).Mistral
-    const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY! })
-
-    const ocrResponse = await mistral.ocr.process({
-      model: 'mistral-ocr-latest',
-      document: {
-        type: 'image_url',
-        imageUrl: `data:${mimeType};base64,${base64}`
-      }
+    // Call OpenAI for Vision-based OCR
+    const openai = getOpenAIClient()
+    const response = await openai.chat.completions.create({
+      model: "gpt-5.4",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Extract all text from this image and return it as markdown. Maintain the structure and tables if any. Return only the extracted text, no conversational filler." },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:${mimeType};base64,${base64}`,
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: 2000,
     })
 
-    const extractedText = ocrResponse.pages?.map((p: any) => p.markdown || p.text || '').join('\n\n') || ''
+    const extractedText = response.choices[0]?.message?.content?.trim() || ''
 
     if (!shouldStore || !extractedText) {
       return NextResponse.json({ text: extractedText, stored: false })

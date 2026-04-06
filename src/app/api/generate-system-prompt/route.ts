@@ -2,7 +2,7 @@
 // System Prompt Generator — Production-grade with guardrails
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getGroqClient } from '@/lib/ai/clients'
+import { getOpenAIClient } from '@/lib/ai/clients'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { AI_MODELS } from '@/config'
 
@@ -133,8 +133,8 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        // ── Generate system prompt via Groq ───────────────────
-        const completion = await getGroqClient().chat.completions.create({
+        // ── Generate system prompt via OpenAI ───────────────────
+        const completion = await getOpenAIClient().chat.completions.create({
             model: AI_MODELS.SYSTEM_PROMPT_GEN,
             temperature: 0.4,   // Thoda lower — consistent output
             max_tokens: 1000,
@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
 
         // ── GUARDRAIL 3: Empty response check ─────────────────
         if (!systemPrompt || systemPrompt.length < 20) {
-            console.error('[generate-prompt] Groq returned empty/short response')
+            console.error('[generate-prompt] OpenAI returned empty/short response')
             return NextResponse.json(
                 { error: 'Failed to generate system prompt — please try again' },
                 { status: 500 }
@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
         })
 
     } catch (error: unknown) {
-        // ── GUARDRAIL 5: Groq rate limit ─────────────────────
+        // ── GUARDRAIL 5: OpenAI rate limit ─────────────────────
         if (typeof error === 'object' && error !== null && 'status' in error && (error as { status: number }).status === 429) {
             return NextResponse.json(
                 { error: 'Too many requests — please wait a moment and try again' },

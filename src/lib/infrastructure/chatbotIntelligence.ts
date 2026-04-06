@@ -3,7 +3,7 @@
  * Context awareness, conversation memory, personality, fallback chains
  */
 
-import { getGroqClient } from '@/lib/ai/clients'
+import { getOpenAIClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import { createError, retryWithExponentialBackoff } from './errorHandler'
 import { logger } from './logger'
@@ -122,8 +122,8 @@ export async function advancedChat(
     // Primary: Fast model for quick response
     const response = await retryWithExponentialBackoff(
       async () => {
-        return await getGroqClient().chat.completions.create({
-          model: 'llama-3.1-8b-instant', // Fast
+        return await getOpenAIClient().chat.completions.create({
+          model: AI_MODELS.CHAT_PRIMARY,
           messages: messages.map(m => ({
             role: m.role,
             content: m.content,
@@ -150,7 +150,7 @@ export async function advancedChat(
 
     logger.info('Chat completion succeeded', {
       userId: context.userId,
-      model: 'llama-3.1-8b-instant',
+      model: AI_MODELS.CHAT_PRIMARY,
       inputTokens: response.usage?.prompt_tokens,
       outputTokens: response.usage?.completion_tokens,
     })
@@ -169,8 +169,8 @@ export async function advancedChat(
 
     // Fallback 1: Larger, slower model (better quality but slower)
     try {
-      const fallbackResponse = await getGroqClient().chat.completions.create({
-        model: 'llama-3.3-70b-versatile', // More capable but slower
+      const fallbackResponse = await getOpenAIClient().chat.completions.create({
+        model: AI_MODELS.CHAT_FALLBACK,
         messages: messages.map(m => ({
           role: m.role,
           content: m.content,
@@ -190,7 +190,7 @@ export async function advancedChat(
 
         logger.info('Chat completion via fallback', {
           userId: context.userId,
-          model: 'llama-3.3-70b-versatile',
+          model: AI_MODELS.CHAT_FALLBACK,
         })
 
         return {
@@ -246,8 +246,8 @@ export async function analyzeSentiment(message: string): Promise<{
   confidence: number
 }> {
   try {
-    const response = await getGroqClient().chat.completions.create({
-      model: 'llama-3.1-8b-instant',
+    const response = await getOpenAIClient().chat.completions.create({
+      model: AI_MODELS.SENTIMENT,
       messages: [
         {
           role: 'system',
@@ -327,8 +327,8 @@ export async function extractStructuredData(
       .map(([key, desc]) => `${key}: ${desc}`)
       .join('\n')
 
-    const response = await getGroqClient().chat.completions.create({
-      model: 'llama-3.1-8b-instant',
+    const response = await getOpenAIClient().chat.completions.create({
+      model: AI_MODELS.CHAT_PRIMARY,
       messages: [
         {
           role: 'system',

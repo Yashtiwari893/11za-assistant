@@ -1,11 +1,11 @@
 // src/lib/ai/provider.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { extractJSON, getErrorMessage, groqCompletion, completionWithFallback } from './provider'
-import { getGroqClient } from './clients'
+import { extractJSON, getErrorMessage, openaiCompletion, completionWithFallback } from './provider'
+import { getOpenAIClient } from './clients'
 
 // Mock the Groq client
 vi.mock('./clients', () => ({
-  getGroqClient: vi.fn(),
+  getOpenAIClient: vi.fn(),
 }))
 
 describe('AI Provider Abstraction', () => {
@@ -53,13 +53,13 @@ describe('AI Provider Abstraction', () => {
     })
   })
 
-  describe('groqCompletion', () => {
+  describe('openaiCompletion', () => {
     beforeEach(() => {
       vi.clearAllMocks()
     })
 
-    it('should call groq SDK with correct parameters', async () => {
-      const mockGroq = {
+    it('should call openai SDK with correct parameters', async () => {
+      const mockOpenAI = {
         chat: {
           completions: {
             create: vi.fn().mockResolvedValue({
@@ -69,12 +69,12 @@ describe('AI Provider Abstraction', () => {
           },
         },
       }
-      vi.mocked(getGroqClient).mockReturnValue(mockGroq as any)
-
-      const result = await groqCompletion([{ role: 'user', content: 'Hi' }])
-
+      vi.mocked(getOpenAIClient).mockReturnValue(mockOpenAI as any)
+ 
+      const result = await openaiCompletion([{ role: 'user', content: 'Hi' }])
+ 
       expect(result.content).toBe('Hello!')
-      expect(mockGroq.chat.completions.create).toHaveBeenCalledWith(
+      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: [{ role: 'user', content: 'Hi' }],
         })
@@ -84,7 +84,7 @@ describe('AI Provider Abstraction', () => {
 
   describe('completionWithFallback', () => {
     it('should use primary model on first attempt', async () => {
-      const mockGroq = {
+      const mockOpenAI = {
         chat: {
           completions: {
             create: vi.fn().mockResolvedValue({
@@ -94,16 +94,16 @@ describe('AI Provider Abstraction', () => {
           },
         },
       }
-      vi.mocked(getGroqClient).mockReturnValue(mockGroq as any)
+      vi.mocked(getOpenAIClient).mockReturnValue(mockOpenAI as any)
 
       const result = await completionWithFallback([{ role: 'user', content: 'Hi' }])
 
       expect(result.content).toBe('Primary response')
-      expect(mockGroq.chat.completions.create).toHaveBeenCalledTimes(1)
+      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(1)
     })
 
     it('should try fallback when primary fails', async () => {
-      const mockGroq = {
+      const mockOpenAI = {
         chat: {
           completions: {
             create: vi.fn()
@@ -115,12 +115,12 @@ describe('AI Provider Abstraction', () => {
           },
         },
       }
-      vi.mocked(getGroqClient).mockReturnValue(mockGroq as any)
-
+      vi.mocked(getOpenAIClient).mockReturnValue(mockOpenAI as any)
+ 
       const result = await completionWithFallback([{ role: 'user', content: 'Hi' }])
-
+ 
       expect(result.content).toBe('Fallback response')
-      expect(mockGroq.chat.completions.create).toHaveBeenCalledTimes(2)
+      expect(mockOpenAI.chat.completions.create).toHaveBeenCalledTimes(2)
     })
   })
 })

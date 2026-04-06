@@ -1,7 +1,7 @@
 // src/lib/speechToText.ts
-// Voice Note → Text using Groq Whisper — Production-grade
+// Voice Note → Text using OpenAI Whisper — Production-grade
 
-import { getGroqClient } from '@/lib/ai/clients'
+import { getOpenAIClient } from '@/lib/ai/clients'
 import { AI_MODELS, APP, SUPPORTED_AUDIO_FORMATS } from '@/config'
 import fs from 'fs'
 import path from 'path'
@@ -77,8 +77,8 @@ export async function speechToText(audioUrl: string, authToken?: string): Promis
             return null
         }
 
-        // ── Groq Whisper transcription ────────────────────────────
-        const transcription = await getGroqClient().audio.transcriptions.create({
+        // ── OpenAI Whisper transcription ────────────────────────────
+        const transcription = await getOpenAIClient().audio.transcriptions.create({
             file: fs.createReadStream(audioPath),
             model: AI_MODELS.STT,
         })
@@ -110,7 +110,7 @@ export async function speechToText(audioUrl: string, authToken?: string): Promis
         return { text, language }
 
     } catch (err) {
-        console.error('[STT] Groq Whisper failed:', err)
+        console.error('[STT] OpenAI Whisper failed:', err)
         if (audioPath) cleanup(audioPath)
         return null
     }

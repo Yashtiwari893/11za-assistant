@@ -2,7 +2,7 @@
 // Natural Language Date/Time Parser — Production-grade
 // "kal 11 bje", "har Sunday 9am", "parso shaam" → JavaScript Date
 
-import { getGroqClient } from '@/lib/ai/clients'
+import { getOpenAIClient } from '@/lib/ai/clients'
 import { AI_MODELS, APP } from '@/config'
 
 const DEFAULT_TZ = APP.DEFAULT_TIMEZONE
@@ -27,7 +27,7 @@ const EMPTY: ParsedDateTime = {
 }
 
 // ─── LOCAL QUICK PARSE ────────────────────────────────────────
-// Common patterns detect karo without Groq API call
+// Common patterns detect karo without OpenAI API call
 function quickParse(text: string): ParsedDateTime | null {
   const lower = text.toLowerCase().trim()
   const now = new Date()
@@ -82,7 +82,7 @@ function quickParse(text: string): ParsedDateTime | null {
     return { ...EMPTY, isRecurring: true, recurrence: 'monthly', recurrenceTime, confidence: 0.85, humanReadable: `Every month` }
   }
 
-  return null  // Groq pe jaao
+  return null  // OpenAI pe jaao
 }
 
 function extractTime(match: RegExpMatchArray, fullText?: string): string {
@@ -180,7 +180,7 @@ export async function parseDateTime(
   const quick = quickParse(cleanText)
   if (quick && quick.confidence >= 0.9) return quick
 
-  // ── Step 2: Groq NLU parse ─────────────────────────────────
+  // ── Step 2: OpenAI NLU parse ─────────────────────────────────
   const now = new Date()
   const nowIST = new Intl.DateTimeFormat('en-IN', {
     timeZone: userTimezone,
@@ -189,7 +189,7 @@ export async function parseDateTime(
   }).format(now)
 
   try {
-    const response = await getGroqClient().chat.completions.create({
+    const response = await getOpenAIClient().chat.completions.create({
       model: AI_MODELS.DATE_PARSER,
       max_tokens: 200,
       temperature: 0.05,              // Very low — deterministic output
@@ -212,7 +212,7 @@ export async function parseDateTime(
       const fiveMinAgo = new Date(now.getTime() - 5 * 60_000)
 
       if (parsedDate < fiveMinAgo) {
-        // Groq ne past time parse kiya — tomorrow assume karo
+        // OpenAI ne past time parse kiya — tomorrow assume karo
         console.warn('[dateParser] Past time parsed — adjusting to tomorrow')
         parsedDate.setDate(parsedDate.getDate() + 1)
       }
@@ -248,11 +248,11 @@ export async function parseDateTime(
     // ── GUARDRAIL 7: JSON parse fail ─────────────────────────
     const error = err instanceof Error ? err : new Error('Unknown error')
     if (error instanceof SyntaxError) {
-      console.error('[dateParser] JSON parse failed — Groq returned invalid JSON')
+      console.error('[dateParser] JSON parse failed — OpenAI returned invalid JSON')
     } else if (typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 429) {
-      console.warn('[dateParser] Groq rate limited')
+      console.warn('[dateParser] OpenAI rate limited')
     } else {
-      console.error('[dateParser] Groq parsing failed:', error.message)
+      console.error('[dateParser] OpenAI parsing failed:', error.message)
     }
 
     return { ...EMPTY, humanReadable: cleanText }

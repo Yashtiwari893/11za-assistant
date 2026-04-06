@@ -23,6 +23,7 @@ export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 // ─── AI Providers ─────────────────────────────────────────────
 
+export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
 export const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 export const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || ''
 
@@ -61,15 +62,15 @@ export const WEBHOOK_VERIFY_TOKEN = optionalEnv('WEBHOOK_VERIFY_TOKEN')
 // ─── AI Model Configuration ──────────────────────────────────
 
 export const AI_MODELS = {
-  INTENT_CLASSIFIER: 'llama-3.3-70b-versatile',
-  DATE_PARSER: 'llama-3.1-8b-instant',
-  AUTO_RESPONDER: 'llama-3.3-70b-versatile',
-  CHAT_PRIMARY: 'llama-3.1-8b-instant',
-  CHAT_FALLBACK: 'llama-3.3-70b-versatile',
-  LANGUAGE_DETECT: 'llama3-8b-8192',
-  SYSTEM_PROMPT_GEN: 'llama-3.3-70b-versatile',
-  SENTIMENT: 'llama-3.1-8b-instant',
-  STT: 'whisper-large-v3',
+  INTENT_CLASSIFIER: 'gpt-5.4',
+  DATE_PARSER: 'gpt-5.4',
+  AUTO_RESPONDER: 'gpt-5.4',
+  CHAT_PRIMARY: 'gpt-5.4',
+  CHAT_FALLBACK: 'gpt-5.4',
+  LANGUAGE_DETECT: 'gpt-5.4',
+  SYSTEM_PROMPT_GEN: 'gpt-5.4',
+  SENTIMENT: 'gpt-5.4',
+  STT: 'whisper-1',
 } as const
 
 // ─── Application Constants ────────────────────────────────────

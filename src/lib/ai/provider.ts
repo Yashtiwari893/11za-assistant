@@ -2,8 +2,8 @@
 // AI Provider Abstraction — unified interface for Groq, Mistral, and future models
 // Switch providers without changing business logic
 
-import { getGroqClient } from './clients'
-import { AI_MODELS, MISTRAL_API_KEY } from '@/config'
+import { getOpenAIClient } from './clients'
+import { AI_MODELS, OPENAI_API_KEY } from '@/config'
 import { logger } from '@/lib/infrastructure/logger'
 
 // ─── Types ────────────────────────────────────────────────────
@@ -36,25 +36,25 @@ export interface EmbeddingResult {
   model: string
 }
 
-// ─── Groq Provider ────────────────────────────────────────────
-
-export async function groqCompletion(
+// ─── OpenAI Provider ──────────────────────────────────────────
+ 
+export async function openaiCompletion(
   messages: ChatMessage[],
   options: CompletionOptions = {}
 ): Promise<CompletionResult> {
   const model = options.model || AI_MODELS.CHAT_PRIMARY
-  const groq = getGroqClient()
-
-  const response = await groq.chat.completions.create({
+  const openai = getOpenAIClient()
+ 
+  const response = await openai.chat.completions.create({
     model,
     messages,
     temperature: options.temperature ?? 0.3,
     max_tokens: options.maxTokens ?? 500,
     ...(options.responseFormat === 'json' ? { response_format: { type: 'json_object' as const } } : {}),
   })
-
+ 
   const content = response.choices?.[0]?.message?.content || ''
-
+ 
   return {
     content,
     model,
@@ -66,29 +66,28 @@ export async function groqCompletion(
   }
 }
 
-// ─── Mistral Provider (Embeddings) ────────────────────────────
-
-export async function mistralEmbedding(
+// ─── OpenAI Provider (Embeddings) ────────────────────────────
+ 
+export async function openaiEmbedding(
   text: string,
-  model: string = 'mistral-embed'
+  model: string = 'text-embedding-3-small'
 ): Promise<EmbeddingResult> {
-  if (!MISTRAL_API_KEY) {
-    throw new Error('MISTRAL_API_KEY not configured')
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY not configured')
   }
-
-  const { Mistral } = await import('@mistralai/mistralai')
-  const client = new Mistral({ apiKey: MISTRAL_API_KEY })
-
+ 
+  const client = getOpenAIClient()
+ 
   const response = await client.embeddings.create({
     model,
-    inputs: [text],
+    input: text,
   })
-
+ 
   const embedding = response.data?.[0]?.embedding
   if (!embedding || !Array.isArray(embedding)) {
-    throw new Error('Mistral returned no embedding data')
+    throw new Error('OpenAI returned no embedding data')
   }
-
+ 
   return { embedding, model }
 }
 
@@ -103,7 +102,7 @@ export async function completionWithFallback(
   const fallbackModel = AI_MODELS.CHAT_FALLBACK
 
   try {
-    return await groqCompletion(messages, { ...options, model: primaryModel })
+    return await openaiCompletion(messages, { ...options, model: primaryModel })
   } catch (primaryErr: unknown) {
     const error = primaryErr instanceof Error ? primaryErr : new Error('Unknown error')
     logger.warn('Primary model failed, trying fallback', {
@@ -111,9 +110,9 @@ export async function completionWithFallback(
       fallbackModel,
       error: error.message,
     })
-
+ 
     try {
-      return await groqCompletion(messages, { ...options, model: fallbackModel })
+      return await openaiCompletion(messages, { ...options, model: fallbackModel })
     } catch (fallbackErr: unknown) {
       const fbError = fallbackErr instanceof Error ? fallbackErr : new Error('Unknown error')
       logger.error('Both primary and fallback models failed', {

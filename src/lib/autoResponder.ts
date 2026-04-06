@@ -2,7 +2,7 @@
 // AI Auto-Responder — RAG/general chat fallback, invoked after feature handlers.
 
 import { getSupabaseClient } from '@/lib/infrastructure/database'
-import { getGroqClient } from '@/lib/ai/clients'
+import { getOpenAIClient } from '@/lib/ai/clients'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import { getContext } from '@/lib/infrastructure/sessionContext'
 import { AI_MODELS, APP, WHATSAPP_AUTH_TOKEN, WHATSAPP_ORIGIN } from '@/config'
@@ -215,7 +215,7 @@ async function markMessageAsResponded(messageId: string): Promise<void> {
 async function generateLlmReply(params: GenerateLlmReplyParams): Promise<string | null> {
   const { systemPrompt, history, userText } = params
 
-  const completion = await getGroqClient().chat.completions.create({
+  const completion = await getOpenAIClient().chat.completions.create({
     model: AI_MODELS.AUTO_RESPONDER,
     messages: [
       { role: 'system', content: systemPrompt },
@@ -322,7 +322,7 @@ export async function generateAutoResponse(
   } catch (err: unknown) {
     // Known recoverable error: Groq rate limit
     if (typeof err === 'object' && err !== null && (err as { status?: number }).status === 429) {
-      console.warn('[autoResponder] Groq rate limit hit')
+      console.warn('[autoResponder] OpenAI rate limit hit')
       return { success: false, error: 'AI service busy — please try again in a moment' }
     }
 

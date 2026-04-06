@@ -1,7 +1,7 @@
 // src/lib/language.ts
 // Language Detection — Fast local first, Groq fallback
 
-import { getGroqClient } from '@/lib/ai/clients'
+import { getOpenAIClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import type { Language } from '@/types'
 
@@ -59,9 +59,9 @@ export async function detectLanguage(text: string): Promise<Language> {
         return localResult
     }
 
-    // ── Step 2: Groq fallback for ambiguous text ───────────────
+    // ── Step 2: OpenAI fallback for ambiguous text ───────────────
     try {
-        const completion = await getGroqClient().chat.completions.create({
+        const completion = await getOpenAIClient().chat.completions.create({
             model: AI_MODELS.LANGUAGE_DETECT,
             temperature: 0,
             max_tokens: 10,                 // Sirf language name chahiye
@@ -95,12 +95,12 @@ export async function detectLanguage(text: string): Promise<Language> {
         return 'en'  // Safe default
 
     } catch (err: unknown) {
-        // ── GUARDRAIL 4: Groq rate limit ────────────────────────
+        // ── GUARDRAIL 4: OpenAI rate limit ────────────────────────
         const error = err as { status?: number; message?: string }
         if (error?.status === 429) {
             console.warn('[detectLanguage] Rate limited — defaulting to en')
         } else {
-            console.error('[detectLanguage] Groq failed:', error?.message)
+            console.error('[detectLanguage] OpenAI failed:', error?.message)
         }
         return 'en'  // Always safe fallback
     }

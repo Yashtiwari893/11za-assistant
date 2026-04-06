@@ -1,4 +1,4 @@
-import { getGroqClient } from '@/lib/ai/clients'
+import { getOpenAIClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import { retryWithExponentialBackoff } from '@/lib/infrastructure/errorHandler'
 import type { Intent, IntentResult } from '@/types'
@@ -135,7 +135,7 @@ export async function classifyIntent(
 
   try {
     const completion = await retryWithExponentialBackoff(
-      async () => getGroqClient().chat.completions.create({
+      async () => getOpenAIClient().chat.completions.create({
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           {
