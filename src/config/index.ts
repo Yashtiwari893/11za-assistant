@@ -62,14 +62,14 @@ export const WEBHOOK_VERIFY_TOKEN = optionalEnv('WEBHOOK_VERIFY_TOKEN')
 // ─── AI Model Configuration ──────────────────────────────────
 
 export const AI_MODELS = {
-  INTENT_CLASSIFIER: 'gpt-5.4',
-  DATE_PARSER: 'gpt-5.4',
-  AUTO_RESPONDER: 'gpt-5.4',
-  CHAT_PRIMARY: 'gpt-5.4',
-  CHAT_FALLBACK: 'gpt-5.4',
-  LANGUAGE_DETECT: 'gpt-5.4',
-  SYSTEM_PROMPT_GEN: 'gpt-5.4',
-  SENTIMENT: 'gpt-5.4',
+  INTENT_CLASSIFIER: 'gpt-4o-mini',
+  DATE_PARSER: 'gpt-4o-mini',
+  AUTO_RESPONDER: 'gpt-4o-mini',
+  CHAT_PRIMARY: 'gpt-4o-mini',
+  CHAT_FALLBACK: 'gpt-4o-mini',
+  LANGUAGE_DETECT: 'gpt-4o-mini',
+  SYSTEM_PROMPT_GEN: 'gpt-4o-mini',
+  SENTIMENT: 'gpt-4o-mini',
   STT: 'whisper-1',
 } as const
 
