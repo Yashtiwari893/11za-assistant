@@ -2,7 +2,6 @@
 // System Prompt Generator — Production-grade with guardrails
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getGroqClient } from '@/lib/ai/clients'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
 import { AI_MODELS } from '@/config'
 
@@ -133,21 +132,17 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        // ── Generate system prompt via Groq ───────────────────
-        const completion = await getGroqClient().chat.completions.create({
+        // ── Generate system prompt via Gemini ───────────────────
+        const { getGeminiClient } = await import('@/lib/ai/clients')
+        const gemini = getGeminiClient()
+        const model = gemini.getGenerativeModel({ 
             model: AI_MODELS.SYSTEM_PROMPT_GEN,
-            temperature: 0.4,   // Thoda lower — consistent output
-            max_tokens: 1000,
-            messages: [
-                { role: 'system', content: ARCHITECT_PROMPT },
-                {
-                    role: 'user',
-                    content: `Create a system prompt for a WhatsApp chatbot with this purpose:\n"${cleanIntent}"`
-                },
-            ]
+            systemInstruction: ARCHITECT_PROMPT
         })
 
-        const systemPrompt = completion.choices[0]?.message?.content?.trim()
+        const result = await model.generateContent(`Create a system prompt for a WhatsApp chatbot with this purpose:\n"${cleanIntent}"`)
+
+        const systemPrompt = result.response.text()?.trim()
 
         // ── GUARDRAIL 3: Empty response check ─────────────────
         if (!systemPrompt || systemPrompt.length < 20) {
