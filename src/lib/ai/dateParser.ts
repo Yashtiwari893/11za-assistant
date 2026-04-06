@@ -2,7 +2,7 @@
 // Natural Language Date/Time Parser — Production-grade
 // "kal 11 bje", "har Sunday 9am", "parso shaam" → JavaScript Date
 
-import { getClaudeClient } from '@/lib/ai/clients'
+import { getGroqClient } from '@/lib/ai/clients'
 import { AI_MODELS, APP } from '@/config'
 
 const DEFAULT_TZ = APP.DEFAULT_TIMEZONE
@@ -117,12 +117,12 @@ function extractTime(match: RegExpMatchArray, fullText?: string): string {
   return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`
 }
 
-// ─── CLAUDE PROMPT ─────────────────────────────────────────────
+// ─── GROQ PROMPT ─────────────────────────────────────────────
 function buildPrompt(text: string, nowIST: string, tz: string): string {
   return `Current date/time (IST): ${nowIST}
 Timezone: ${tz}
 
-Parse this date/time expression and return ONLY valid JSON. No markdown. No explanation.
+Parse this date/time expression and return ONLY valid JSON. No explanation.
 Expression: "${text}"
 
 Hindi/Hinglish reference:
@@ -143,7 +143,7 @@ Hindi/Hinglish reference:
 - "dopahar 2 baje" = 2:00 PM | "raat 9 baje" = 9:00 PM
 - ALWAYS output isoDateTime with +05:30 offset (IST)
 
-Output format must be valid JSON:
+Output format:
 {
   "isoDateTime": "2024-03-23T14:00:00+05:30",
   "isRecurring": false,
@@ -153,7 +153,10 @@ Output format must be valid JSON:
   "humanReadable": "Tomorrow at 2:00 PM"
 }
 
-If cannot parse:
+For recurring reminders:
+{ "isoDateTime": null, "isRecurring": true, "recurrence": "weekly", "recurrenceTime": "14:00", "confidence": 0.9, "humanReadable": "Every week at 2:00 PM" }
+
+If cannot parse at all:
 { "isoDateTime": null, "isRecurring": false, "recurrence": null, "recurrenceTime": null, "confidence": 0, "humanReadable": "" }`
 }
 
@@ -177,7 +180,7 @@ export async function parseDateTime(
   const quick = quickParse(cleanText)
   if (quick && quick.confidence >= 0.9) return quick
 
-  // ── Step 2: Claude NLU parse ─────────────────────────────────
+  // ── Step 2: Groq NLU parse ─────────────────────────────────
   const now = new Date()
   const nowIST = new Intl.DateTimeFormat('en-IN', {
     timeZone: userTimezone,
@@ -186,18 +189,18 @@ export async function parseDateTime(
   }).format(now)
 
   try {
-    const response = await getClaudeClient().messages.create({
+    const response = await getGroqClient().chat.completions.create({
       model: AI_MODELS.DATE_PARSER,
-      max_tokens: 300,
-      temperature: 0,
-      system: "You are a date and time parser. Return ONLY valid JSON as per the requested schema. No markdown.",
+      max_tokens: 200,
+      temperature: 0.05,              // Very low — deterministic output
+      response_format: { type: 'json_object' },
       messages: [{
         role: 'user',
         content: buildPrompt(cleanText, nowIST, userTimezone)
       }]
     })
 
-    const raw = response.content[0].type === 'text' ? response.content[0].text : '{}'
+    const raw = response.choices[0]?.message?.content ?? ''
     const parsed = JSON.parse(raw)
 
     // ── GUARDRAIL 3: Validate parsed result ───────────────────
@@ -245,11 +248,11 @@ export async function parseDateTime(
     // ── GUARDRAIL 7: JSON parse fail ─────────────────────────
     const error = err instanceof Error ? err : new Error('Unknown error')
     if (error instanceof SyntaxError) {
-      console.error('[dateParser] JSON parse failed — Claude returned invalid JSON')
+      console.error('[dateParser] JSON parse failed — Groq returned invalid JSON')
     } else if (typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 429) {
-      console.warn('[dateParser] Claude rate limited')
+      console.warn('[dateParser] Groq rate limited')
     } else {
-      console.error('[dateParser] Claude parsing failed:', error.message)
+      console.error('[dateParser] Groq parsing failed:', error.message)
     }
 
     return { ...EMPTY, humanReadable: cleanText }

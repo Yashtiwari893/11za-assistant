@@ -1,4 +1,4 @@
-import { getClaudeClient } from '@/lib/ai/clients'
+import { getGroqClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import { retryWithExponentialBackoff } from '@/lib/infrastructure/errorHandler'
 import type { Intent, IntentResult } from '@/types'
@@ -135,22 +135,23 @@ export async function classifyIntent(
 
   try {
     const completion = await retryWithExponentialBackoff(
-      async () => getClaudeClient().messages.create({
-        model: AI_MODELS.INTENT_CLASSIFIER,
-        max_tokens: 400,
-        temperature: 0,
-        system: SYSTEM_PROMPT + "\n\nReturn ONLY valid JSON. No markdown. No explanation.",
+      async () => getGroqClient().chat.completions.create({
         messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
           {
             role: 'user',
             content: `Current time (IST): ${timeStr}. User language: ${lang}.${contextHint}${historyStr}\n\nUser message: "${message}"`
           }
         ],
+        model: AI_MODELS.INTENT_CLASSIFIER,
+        temperature: 0.05,
+        response_format: { type: 'json_object' },
+        max_tokens: 400,
       }),
       2 // 2 retries on failure
     )
 
-    const raw = completion.content[0].type === 'text' ? completion.content[0].text : '{}'
+    const raw = completion.choices[0]?.message?.content || '{}'
     const result = JSON.parse(raw)
 
     return {

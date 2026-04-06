@@ -2,7 +2,7 @@
 // AI Auto-Responder — RAG/general chat fallback, invoked after feature handlers.
 
 import { getSupabaseClient } from '@/lib/infrastructure/database'
-import { getClaudeClient } from '@/lib/ai/clients'
+import { getGroqClient } from '@/lib/ai/clients'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import { getContext } from '@/lib/infrastructure/sessionContext'
 import { AI_MODELS, APP, WHATSAPP_AUTH_TOKEN, WHATSAPP_ORIGIN } from '@/config'
@@ -209,48 +209,27 @@ async function markMessageAsResponded(messageId: string): Promise<void> {
 // ─── LLM ──────────────────────────────────────────────────────
 
 /**
- * Calls the Anthropic Claude API with the assembled prompt and conversation history.
+ * Calls the Groq LLM with the assembled prompt and conversation history.
  * Returns the sanitized reply string, or null if the response is empty.
  */
 async function generateLlmReply(params: GenerateLlmReplyParams): Promise<string | null> {
   const { systemPrompt, history, userText } = params
 
-  // BUG FIX: Claude requires strictly alternating user/assistant roles
-  const sanitizedMessages: any[] = []
-  let lastRole: string | null = null
+  const completion = await getGroqClient().chat.completions.create({
+    model: AI_MODELS.AUTO_RESPONDER,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      ...history,
+      { role: 'user', content: userText },
+    ],
+    temperature: GROQ_TEMPERATURE,
+    max_tokens: APP.MAX_REPLY_TOKENS,
+  })
 
-  // Process history + current message
-  const allMessages = [...history, { role: 'user', content: userText }]
+  const raw = completion.choices[0]?.message?.content?.trim()
+  if (!raw || raw.length < 2) return null
 
-  for (const msg of allMessages) {
-    if (msg.role === lastRole) {
-      // Merge content if same role consecutive (safety)
-      if (sanitizedMessages.length > 0) {
-        sanitizedMessages[sanitizedMessages.length - 1].content += `\n${msg.content}`
-      }
-      continue
-    }
-    sanitizedMessages.push({ role: msg.role, content: msg.content })
-    lastRole = msg.role
-  }
-
-  try {
-    const completion = await getClaudeClient().messages.create({
-      model: AI_MODELS.AUTO_RESPONDER,
-      max_tokens: APP.MAX_REPLY_TOKENS,
-      system: systemPrompt,
-      messages: sanitizedMessages as any,
-      temperature: 0.3, // Warm enough for ZARA
-    })
-
-    const raw = completion.content[0].type === 'text' ? completion.content[0].text.trim() : null
-    if (!raw || raw.length < 2) return null
-
-    return raw.replace(FORBIDDEN_AI_PHRASE_PATTERN, 'available information')
-  } catch (err: any) {
-    console.error('[autoResponder] Claude API error:', err)
-    return null
-  }
+  return raw.replace(FORBIDDEN_AI_PHRASE_PATTERN, 'available information')
 }
 
 // ─── Main Handler ─────────────────────────────────────────────
@@ -341,9 +320,9 @@ export async function generateAutoResponse(
     return { success: true, response: reply, sent: true }
 
   } catch (err: unknown) {
-    // Known recoverable error: Claude rate limit
+    // Known recoverable error: Groq rate limit
     if (typeof err === 'object' && err !== null && (err as { status?: number }).status === 429) {
-      console.warn('[autoResponder] Claude rate limit hit')
+      console.warn('[autoResponder] Groq rate limit hit')
       return { success: false, error: 'AI service busy — please try again in a moment' }
     }
 

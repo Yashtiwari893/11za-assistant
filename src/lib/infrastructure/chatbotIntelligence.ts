@@ -3,7 +3,7 @@
  * Context awareness, conversation memory, personality, fallback chains
  */
 
-import { getClaudeClient } from '@/lib/ai/clients'
+import { getGroqClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import { createError, retryWithExponentialBackoff } from './errorHandler'
 import { logger } from './logger'
@@ -104,36 +104,30 @@ export async function advancedChat(
 
   const systemPrompt = buildSystemPrompt(context)
 
-  // Build messages for Claude (strictly alternating)
-  const sanitizedMessages: any[] = []
-  let lastRole: string | null = null
+  // Build messages with RAG context
+  let messages: ConversationMessage[] = [
+    { role: 'system', content: systemPrompt },
+  ]
 
-  for (const m of context.conversationHistory) {
-    const role = (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant'
-    if (role === lastRole) {
-      if (sanitizedMessages.length > 0) {
-        sanitizedMessages[sanitizedMessages.length - 1].content += `\n${m.content}`
-      }
-      continue
-    }
-    sanitizedMessages.push({ role, content: m.content })
-    lastRole = role
-  }
-
-  // If useRAG, add it as a system hint or the first user message
-  let finalSystemPrompt = systemPrompt
   if (useRAG && ragContext) {
-    finalSystemPrompt += `\n\nAvailable context from documents:\n${ragContext.substring(0, 3000)}\n\nUse this context to answer if relevant.`
+    messages.push({
+      role: 'system',
+      content: `Available context from documents:\n${ragContext.substring(0, 3000)}\n\nUse this context to answer if relevant.`,
+    })
   }
+
+  messages = [...messages, ...context.conversationHistory]
 
   try {
-    // Primary: Claude Haiku
+    // Primary: Fast model for quick response
     const response = await retryWithExponentialBackoff(
       async () => {
-        return await getClaudeClient().messages.create({
-          model: AI_MODELS.CHAT_PRIMARY,
-          system: finalSystemPrompt,
-          messages: sanitizedMessages as any,
+        return await getGroqClient().chat.completions.create({
+          model: 'llama-3.1-8b-instant', // Fast
+          messages: messages.map(m => ({
+            role: m.role,
+            content: m.content,
+          })),
           max_tokens: maxTokens,
           temperature,
         })
@@ -141,7 +135,7 @@ export async function advancedChat(
       2 // 2 retries
     )
 
-    const assistantMessage = response.content[0].type === 'text' ? response.content[0].text : ''
+    const assistantMessage = response.choices[0]?.message?.content
 
     if (!assistantMessage) {
       throw new Error('No response from model')
@@ -156,9 +150,9 @@ export async function advancedChat(
 
     logger.info('Chat completion succeeded', {
       userId: context.userId,
-      model: AI_MODELS.CHAT_PRIMARY,
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
+      model: 'llama-3.1-8b-instant',
+      inputTokens: response.usage?.prompt_tokens,
+      outputTokens: response.usage?.completion_tokens,
     })
 
     return {
@@ -173,23 +167,30 @@ export async function advancedChat(
       error: (error as Error).message,
     })
 
-    // Fallback logic for Claude if primary fails
+    // Fallback 1: Larger, slower model (better quality but slower)
     try {
-      const fallbackResponse = await getClaudeClient().messages.create({
-        model: AI_MODELS.CHAT_FALLBACK,
-        system: finalSystemPrompt + "\n\nNote: Be extra precise this time.",
-        messages: sanitizedMessages as any,
+      const fallbackResponse = await getGroqClient().chat.completions.create({
+        model: 'llama-3.3-70b-versatile', // More capable but slower
+        messages: messages.map(m => ({
+          role: m.role,
+          content: m.content,
+        })),
         max_tokens: Math.min(maxTokens, 150),
-        temperature: 0.5,
+        temperature: Math.min(temperature, 0.5), // Lower temp for reliability
       })
 
-      const assistantMessage = fallbackResponse.content[0].type === 'text' ? fallbackResponse.content[0].text : ''
+      const assistantMessage = fallbackResponse.choices[0]?.message?.content
 
       if (assistantMessage) {
         context.conversationHistory.push({
           role: 'assistant',
           content: assistantMessage,
           timestamp: new Date(),
+        })
+
+        logger.info('Chat completion via fallback', {
+          userId: context.userId,
+          model: 'llama-3.3-70b-versatile',
         })
 
         return {
@@ -200,7 +201,9 @@ export async function advancedChat(
         }
       }
     } catch (fallbackError) {
-      logger.error('Claude fallback model also failed', { userId: context.userId }, fallbackError as Error)
+      logger.error('Fallback model also failed', {
+        userId: context.userId,
+      }, fallbackError as Error)
     }
 
     // Fallback 2: Template-based response
@@ -243,10 +246,13 @@ export async function analyzeSentiment(message: string): Promise<{
   confidence: number
 }> {
   try {
-    const response = await getClaudeClient().messages.create({
-      model: AI_MODELS.SENTIMENT,
-      system: 'Analyze sentiment. Return ONLY JSON: {"sentiment": "positive|negative|neutral", "emotion": "string", "confidence": 0-1}',
+    const response = await getGroqClient().chat.completions.create({
+      model: 'llama-3.1-8b-instant',
       messages: [
+        {
+          role: 'system',
+          content: 'Analyze sentiment. Return ONLY JSON: {"sentiment": "positive|negative|neutral", "emotion": "string", "confidence": 0-1}',
+        },
         {
           role: 'user',
           content: message.substring(0, 500),
@@ -256,7 +262,7 @@ export async function analyzeSentiment(message: string): Promise<{
       temperature: 0,
     })
 
-    const content = response.content[0].type === 'text' ? response.content[0].text : ''
+    const content = response.choices[0]?.message?.content
     if (!content) throw new Error('No response')
 
     const parsed = JSON.parse(content)
@@ -321,20 +327,23 @@ export async function extractStructuredData(
       .map(([key, desc]) => `${key}: ${desc}`)
       .join('\n')
 
-    const response = await getClaudeClient().messages.create({
-      model: AI_MODELS.CHAT_PRIMARY,
-      system: `Extract data matching this schema. Return ONLY valid JSON.\nSchema:\n${schemaDesc}`,
+    const response = await getGroqClient().chat.completions.create({
+      model: 'llama-3.1-8b-instant',
       messages: [
+        {
+          role: 'system',
+          content: `Extract data matching this schema. Return ONLY valid JSON.\nSchema:\n${schemaDesc}`,
+        },
         {
           role: 'user',
           content: message.substring(0, 500),
         },
       ],
-      max_tokens: 300,
+      max_tokens: 200,
       temperature: 0,
     })
 
-    const content = response.content[0].type === 'text' ? response.content[0].text : ''
+    const content = response.choices[0]?.message?.content
     if (!content) return {}
 
     return JSON.parse(content)

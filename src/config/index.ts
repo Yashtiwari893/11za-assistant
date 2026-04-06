@@ -24,7 +24,7 @@ export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 // ─── AI Providers ─────────────────────────────────────────────
 
 export const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
-export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || ''
+export const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || ''
 
 // ─── WhatsApp / 11za ──────────────────────────────────────────
 
@@ -61,14 +61,14 @@ export const WEBHOOK_VERIFY_TOKEN = optionalEnv('WEBHOOK_VERIFY_TOKEN')
 // ─── AI Model Configuration ──────────────────────────────────
 
 export const AI_MODELS = {
-  INTENT_CLASSIFIER: 'claude-haiku-4-5-20251001',
-  DATE_PARSER: 'claude-haiku-4-5-20251001',
-  AUTO_RESPONDER: 'claude-haiku-4-5-20251001',
-  CHAT_PRIMARY: 'claude-haiku-4-5-20251001',
-  CHAT_FALLBACK: 'claude-haiku-4-5-20251001',
-  LANGUAGE_DETECT: 'claude-haiku-4-5-20251001',
-  SYSTEM_PROMPT_GEN: 'claude-haiku-4-5-20251001',
-  SENTIMENT: 'claude-haiku-4-5-20251001',
+  INTENT_CLASSIFIER: 'llama-3.3-70b-versatile',
+  DATE_PARSER: 'llama-3.1-8b-instant',
+  AUTO_RESPONDER: 'llama-3.3-70b-versatile',
+  CHAT_PRIMARY: 'llama-3.1-8b-instant',
+  CHAT_FALLBACK: 'llama-3.3-70b-versatile',
+  LANGUAGE_DETECT: 'llama3-8b-8192',
+  SYSTEM_PROMPT_GEN: 'llama-3.3-70b-versatile',
+  SENTIMENT: 'llama-3.1-8b-instant',
   STT: 'whisper-large-v3',
 } as const
 
