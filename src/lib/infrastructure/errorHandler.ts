@@ -4,6 +4,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import Anthropic from '@anthropic-ai/sdk'
 import { logger } from './logger'
 
 export type ErrorCode =
@@ -168,12 +169,15 @@ export async function retryWithExponentialBackoff<T>(
       lastError = error as Error
 
       // Check if error is retryable
-      if (error instanceof AppErrorImpl && !error.isRetryable) {
-        throw error
+      let isRetryable = false
+      if (error instanceof AppErrorImpl) {
+        isRetryable = error.isRetryable
+      } else if (error instanceof Anthropic.APIError) {
+        // Retry on status 429 (rate limit) or 5xx (server error)
+        isRetryable = error.status === 429 || (error.status !== undefined && error.status >= 500)
       }
 
-      // Don't retry on last attempt
-      if (attempt === maxRetries - 1) {
+      if (!isRetryable || attempt === maxRetries - 1) {
         throw error
       }
 

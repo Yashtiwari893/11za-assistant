@@ -1,11 +1,11 @@
 // src/lib/ai/provider.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { extractJSON, getErrorMessage, groqCompletion, completionWithFallback } from './provider'
-import { getGroqClient } from './clients'
+import { extractJSON, getErrorMessage, claudeCompletion, completionWithFallback } from './provider'
+import { getClaudeClient } from './clients'
 
-// Mock the Groq client
+// Mock the Claude client
 vi.mock('./clients', () => ({
-  getGroqClient: vi.fn(),
+  getClaudeClient: vi.fn(),
 }))
 
 describe('AI Provider Abstraction', () => {
@@ -53,28 +53,26 @@ describe('AI Provider Abstraction', () => {
     })
   })
 
-  describe('groqCompletion', () => {
+  describe('claudeCompletion', () => {
     beforeEach(() => {
       vi.clearAllMocks()
     })
 
-    it('should call groq SDK with correct parameters', async () => {
-      const mockGroq = {
-        chat: {
-          completions: {
-            create: vi.fn().mockResolvedValue({
-              choices: [{ message: { content: 'Hello!' } }],
-              usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-            }),
-          },
+    it('should call Claude SDK with correct parameters', async () => {
+      const mockClaude = {
+        messages: {
+          create: vi.fn().mockResolvedValue({
+            content: [{ type: 'text', text: 'Hello!' }],
+            usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          }),
         },
       }
-      vi.mocked(getGroqClient).mockReturnValue(mockGroq as any)
+      vi.mocked(getClaudeClient).mockReturnValue(mockClaude as any)
 
-      const result = await groqCompletion([{ role: 'user', content: 'Hi' }])
+      const result = await claudeCompletion([{ role: 'user', content: 'Hi' }])
 
       expect(result.content).toBe('Hello!')
-      expect(mockGroq.chat.completions.create).toHaveBeenCalledWith(
+      expect(mockClaude.messages.create).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: [{ role: 'user', content: 'Hi' }],
         })
@@ -84,43 +82,39 @@ describe('AI Provider Abstraction', () => {
 
   describe('completionWithFallback', () => {
     it('should use primary model on first attempt', async () => {
-      const mockGroq = {
-        chat: {
-          completions: {
-            create: vi.fn().mockResolvedValue({
-              choices: [{ message: { content: 'Primary response' } }],
-              usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-            }),
-          },
+      const mockClaude = {
+        messages: {
+          create: vi.fn().mockResolvedValue({
+            content: [{ type: 'text', text: 'Primary response' }],
+            usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          }),
         },
       }
-      vi.mocked(getGroqClient).mockReturnValue(mockGroq as any)
+      vi.mocked(getClaudeClient).mockReturnValue(mockClaude as any)
 
       const result = await completionWithFallback([{ role: 'user', content: 'Hi' }])
 
       expect(result.content).toBe('Primary response')
-      expect(mockGroq.chat.completions.create).toHaveBeenCalledTimes(1)
+      expect(mockClaude.messages.create).toHaveBeenCalledTimes(1)
     })
 
     it('should try fallback when primary fails', async () => {
-      const mockGroq = {
-        chat: {
-          completions: {
-            create: vi.fn()
-              .mockRejectedValueOnce(new Error('Rate limit'))
-              .mockResolvedValueOnce({
-                choices: [{ message: { content: 'Fallback response' } }],
-                usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 },
-              }),
-          },
+      const mockClaude = {
+        messages: {
+          create: vi.fn()
+            .mockRejectedValueOnce(new Error('Rate limit'))
+            .mockResolvedValueOnce({
+              content: [{ type: 'text', text: 'Fallback response' }],
+              usage: { input_tokens: 20, output_tokens: 10, total_tokens: 30 },
+            }),
         },
       }
-      vi.mocked(getGroqClient).mockReturnValue(mockGroq as any)
+      vi.mocked(getClaudeClient).mockReturnValue(mockClaude as any)
 
       const result = await completionWithFallback([{ role: 'user', content: 'Hi' }])
 
       expect(result.content).toBe('Fallback response')
-      expect(mockGroq.chat.completions.create).toHaveBeenCalledTimes(2)
+      expect(mockClaude.messages.create).toHaveBeenCalledTimes(2)
     })
   })
 })

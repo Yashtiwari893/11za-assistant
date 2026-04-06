@@ -1,7 +1,7 @@
 // src/lib/language.ts
 // Language Detection — Fast local first, Groq fallback
 
-import { getGroqClient } from '@/lib/ai/clients'
+import { getClaudeClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import type { Language } from '@/types'
 
@@ -59,17 +59,14 @@ export async function detectLanguage(text: string): Promise<Language> {
         return localResult
     }
 
-    // ── Step 2: Groq fallback for ambiguous text ───────────────
+    // ── Step 2: Claude fallback for ambiguous text ───────────────
     try {
-        const completion = await getGroqClient().chat.completions.create({
+        const completion = await getClaudeClient().messages.create({
             model: AI_MODELS.LANGUAGE_DETECT,
             temperature: 0,
-            max_tokens: 10,                 // Sirf language name chahiye
+            max_tokens: 20,                 // Sirf language name chahiye
+            system: 'Detect the language of the text. Reply with ONLY one word: "english", "hindi", or "gujarati". Nothing else. Do not use markdown.',
             messages: [
-                {
-                    role: 'system',
-                    content: 'Detect the language of the text. Reply with ONLY one word: "english", "hindi", or "gujarati". Nothing else.'
-                },
                 {
                     role: 'user',
                     content: cleanText.substring(0, 200)  // Pura text nahi — 200 chars kaafi
@@ -77,7 +74,7 @@ export async function detectLanguage(text: string): Promise<Language> {
             ]
         })
 
-        const raw = completion.choices?.[0]?.message?.content
+        const raw = completion.content[0].type === 'text' ? completion.content[0].text : ''
             ?.toLowerCase()
             ?.trim()
             ?.replace(/[^a-z]/g, '')  // Sirf letters
@@ -95,12 +92,12 @@ export async function detectLanguage(text: string): Promise<Language> {
         return 'en'  // Safe default
 
     } catch (err: unknown) {
-        // ── GUARDRAIL 4: Groq rate limit ────────────────────────
+        // ── GUARDRAIL 4: Claude rate limit ────────────────────────
         const error = err as { status?: number; message?: string }
         if (error?.status === 429) {
-            console.warn('[detectLanguage] Rate limited — defaulting to en')
+            console.warn('[detectLanguage] Claude rate limited — defaulting to en')
         } else {
-            console.error('[detectLanguage] Groq failed:', error?.message)
+            console.error('[detectLanguage] Claude failed:', error?.message)
         }
         return 'en'  // Always safe fallback
     }
