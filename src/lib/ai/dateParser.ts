@@ -195,8 +195,7 @@ function quickParse(text: string): ParsedDateTime | null {
     // Construct a pseudo-match array for extractTime: [full, hour, min, period]
     const pseudoMatch: RegExpMatchArray = [oneShotMatch[0], oneShotMatch[2], oneShotMatch[3], oneShotMatch[4]] as any
     const timeStr = extractTime(pseudoMatch, lower)
-    const [hh, mm] = timeStr.split(':').map(Number)
-
+    // Create date and force it to be IST by calculating the offset
     const targetDate = new Date(now)
     if (/\b(kal|tomorrow|cal)\b/.test(dayMarker) || (dayMarker === '' && /\b(kal|tomorrow|cal)\b/.test(lower))) {
       targetDate.setDate(targetDate.getDate() + 1)
@@ -204,25 +203,42 @@ function quickParse(text: string): ParsedDateTime | null {
       targetDate.setDate(targetDate.getDate() + 2)
     }
 
-    targetDate.setHours(hh, mm, 0, 0)
+    // Explicitly set time in IST
+    // We do this by creating a string in ISO format with +05:30 and parsing it
+    const year = targetDate.getFullYear()
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0')
+    const day = String(targetDate.getDate()).padStart(2, '0')
+    const timeISO = `${year}-${month}-${day}T${timeStr}:00+05:30`
+    
+    const parsed = new Date(timeISO)
+    if (isNaN(parsed.getTime())) return null
+    
+    // Resolve "now" based on IST for past-check
+    const istNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
+    const istTarget = new Date(parsed.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
 
     // If no day keyword and the time is already past → push to tomorrow
     const isExplicitDay = /\b(kal|tomorrow|cal|parso|aaj|today)\b/.test(lower)
-    if (!isExplicitDay && targetDate.getTime() < now.getTime() - 60_000) {
-      targetDate.setDate(targetDate.getDate() + 1)
+    if (!isExplicitDay && istTarget.getTime() < istNow.getTime() - 60_000) {
+      parsed.setDate(parsed.getDate() + 1)
     }
 
-    const dayLabel = targetDate.getDate() === now.getDate() + 1 ? 'Tomorrow' :
-                     targetDate.getDate() === now.getDate() + 2 ? 'Day after tomorrow' : 'Today'
-    const displayHour = hh % 12 || 12
-    const ampmLabel = hh >= 12 ? 'PM' : 'AM'
-    const displayMin = mm > 0 ? `:${String(mm).padStart(2, '0')}` : ''
+    const finalDate = parsed
+    const [hh, mm] = timeStr.split(':').map(Number)
+
+    const dayLabel = finalDate.getDate() === now.getDate() + 1 ? 'Tomorrow' :
+                     finalDate.getDate() === now.getDate() + 2 ? 'Day after tomorrow' : 'Today'
+    
+    // Format human readable time (keeping it simple for quickParse)
+    const displayHH = hh % 12 || 12
+    const displayMM = mm > 0 ? `:${String(mm).padStart(2, '0')}` : ''
+    const displayAP = hh >= 12 ? 'PM' : 'AM'
 
     return {
       ...EMPTY,
-      date: targetDate,
+      date: finalDate,
       confidence: 0.95,
-      humanReadable: `${dayLabel} at ${displayHour}${displayMin} ${ampmLabel}`,
+      humanReadable: `${dayLabel} at ${displayHH}${displayMM} ${displayAP}`,
     }
   }
 
@@ -405,7 +421,17 @@ export async function parseDateTime(
     // ── GUARDRAIL 6: Parse isoDateTime safely ─────────────────
     let parsedDate: Date | null = null
     if (typeof parsed.isoDateTime === 'string' && parsed.isoDateTime) {
-      const candidate = new Date(parsed.isoDateTime)
+      let isoStr = parsed.isoDateTime
+      // ── GUARDRAIL: Strict IST enforcement ──────────────────
+      // If Groq omits the offset (common in small models), append +05:30.
+      // If it adds 'Z', replace with +05:30 (since Groq is instructed to work in IST).
+      if (!isoStr.includes('+') && !isoStr.includes('Z')) {
+        isoStr = isoStr.includes('T') ? `${isoStr}+05:30` : `${isoStr}T00:00:00+05:30`
+      } else if (isoStr.endsWith('Z')) {
+        isoStr = isoStr.replace('Z', '+05:30')
+      }
+
+      const candidate = new Date(isoStr)
       if (!isNaN(candidate.getTime())) {
         parsedDate = candidate
       } else {

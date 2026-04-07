@@ -45,7 +45,7 @@ function cleanReminderTitle(raw: string): string {
   }
 
   // Final sanity: if still empty, use a generic but safe label
-  return cleaned.length > 1 ? cleaned : 'Task'
+  return cleaned.length > 1 ? cleaned : 'Reminder'
 }
 
 // ─── SET REMINDER ─────────────────────────────────────────────
