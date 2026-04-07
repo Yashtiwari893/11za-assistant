@@ -132,26 +132,24 @@ function buildSystemPrompt(phoneSpecificPrompt: string, documentContext?: string
  * This upsert approach is atomic: only one worker wins.
  */
 async function claimMessageForProcessing(messageId: string): Promise<boolean> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('whatsapp_messages')
-    .update({ is_responded: true, response_sent_at: new Date().toISOString() })
+    .update({ 
+      is_responded: true, 
+      response_sent_at: new Date().toISOString() 
+    })
     .eq('message_id', messageId)
-    .eq('is_responded', false)   // Only update if NOT yet responded — atomic claim
+    .eq('is_responded', false)   // Only update if NOT yet responded
+    .select('id')
+    .maybeSingle()
 
-  // If error or no rows matched (already claimed), skip
   if (error) {
-    console.warn('[autoResponder] claimMessageForProcessing error:', error.message)
+    console.warn('[autoResponder] claimMessageForProcessing DB error:', error.message)
     return false
   }
 
-  // Check if our update actually matched a row
-  const { data } = await supabase
-    .from('whatsapp_messages')
-    .select('id')
-    .eq('message_id', messageId)
-    .eq('is_responded', true)
-    .maybeSingle()
-
+  // If data exists, it means our update matched a row and flipped it to true.
+  // This worker won the race.
   return !!data
 }
 
@@ -402,13 +400,16 @@ export async function generateAutoResponse(
       return { success: false, error: 'WhatsApp API credentials not configured' }
     }
 
-    // Build prompt — base rules dominate (BUG FIX: order corrected)
+    // Build prompt — base rules dominate
     const systemPrompt = buildSystemPrompt(phoneConfig.systemPrompt, documentContext)
+    console.log('[autoResponder] System prompt built. History length:', history.length)
 
     // ── LLM call with timeout ─────────────────────────────────
+    console.log('[autoResponder] Calling Groq LLM...')
     let reply: string | null
     try {
       reply = await generateLlmReply({ systemPrompt, history, userText: safeUserText, documentContext })
+      console.log('[autoResponder] LLM response received:', reply ? 'YES' : 'EMPTY')
     } catch (llmErr: unknown) {
       const isAbort = llmErr instanceof Error && llmErr.name === 'AbortError'
       console.error('[autoResponder] LLM error:', isAbort ? 'Timed out' : (llmErr as Error).message)
