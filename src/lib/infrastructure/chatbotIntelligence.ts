@@ -3,10 +3,10 @@
  * Context awareness, conversation memory, personality, fallback chains
  */
 
+import { getGroqClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import { createError, retryWithExponentialBackoff } from './errorHandler'
 import { logger } from './logger'
-import { completionWithFallback, geminiCompletion } from '@/lib/ai/provider'
 
 interface ConversationMessage {
   role: 'user' | 'assistant' | 'system'
@@ -119,25 +119,23 @@ export async function advancedChat(
   messages = [...messages, ...context.conversationHistory]
 
   try {
-    // Primary/Fallback logic now handled by completionWithFallback (Gemini-first)
+    // Primary: Fast model for quick response
     const response = await retryWithExponentialBackoff(
       async () => {
-        return await completionWithFallback(
-          messages.map(m => ({
-            role: m.role as any,
+        return await getGroqClient().chat.completions.create({
+          model: 'llama-3.1-8b-instant', // Fast
+          messages: messages.map(m => ({
+            role: m.role,
             content: m.content,
           })),
-          { 
-            maxTokens, 
-            temperature,
-            model: AI_MODELS.CHAT_PRIMARY
-          }
-        )
+          max_tokens: maxTokens,
+          temperature,
+        })
       },
       2 // 2 retries
     )
 
-    const assistantMessage = response.content
+    const assistantMessage = response.choices[0]?.message?.content
 
     if (!assistantMessage) {
       throw new Error('No response from model')
@@ -152,7 +150,9 @@ export async function advancedChat(
 
     logger.info('Chat completion succeeded', {
       userId: context.userId,
-      model: AI_MODELS.CHAT_PRIMARY,
+      model: 'llama-3.1-8b-instant',
+      inputTokens: response.usage?.prompt_tokens,
+      outputTokens: response.usage?.completion_tokens,
     })
 
     return {
@@ -162,12 +162,51 @@ export async function advancedChat(
       tone: 'helpful',
     }
   } catch (error) {
-    logger.error('Gemini chat failed after fallbacks', {
+    logger.warn('Primary chat model failed, trying fallback', {
       userId: context.userId,
       error: (error as Error).message,
     })
 
-    // Fallback: Template-based response
+    // Fallback 1: Larger, slower model (better quality but slower)
+    try {
+      const fallbackResponse = await getGroqClient().chat.completions.create({
+        model: 'llama-3.3-70b-versatile', // More capable but slower
+        messages: messages.map(m => ({
+          role: m.role,
+          content: m.content,
+        })),
+        max_tokens: Math.min(maxTokens, 150),
+        temperature: Math.min(temperature, 0.5), // Lower temp for reliability
+      })
+
+      const assistantMessage = fallbackResponse.choices[0]?.message?.content
+
+      if (assistantMessage) {
+        context.conversationHistory.push({
+          role: 'assistant',
+          content: assistantMessage,
+          timestamp: new Date(),
+        })
+
+        logger.info('Chat completion via fallback', {
+          userId: context.userId,
+          model: 'llama-3.3-70b-versatile',
+        })
+
+        return {
+          message: assistantMessage,
+          confidence: 0.85,
+          requiresFollowUp: false,
+          tone: 'helpful',
+        }
+      }
+    } catch (fallbackError) {
+      logger.error('Fallback model also failed', {
+        userId: context.userId,
+      }, fallbackError as Error)
+    }
+
+    // Fallback 2: Template-based response
     const templates: Record<string, string[]> = {
       en: [
         'I\'m having trouble processing that right now. Could you rephrase?',
@@ -207,8 +246,9 @@ export async function analyzeSentiment(message: string): Promise<{
   confidence: number
 }> {
   try {
-    const response = await geminiCompletion(
-      [
+    const response = await getGroqClient().chat.completions.create({
+      model: 'llama-3.1-8b-instant',
+      messages: [
         {
           role: 'system',
           content: 'Analyze sentiment. Return ONLY JSON: {"sentiment": "positive|negative|neutral", "emotion": "string", "confidence": 0-1}',
@@ -218,10 +258,11 @@ export async function analyzeSentiment(message: string): Promise<{
           content: message.substring(0, 500),
         },
       ],
-      { model: AI_MODELS.SENTIMENT, temperature: 0, maxTokens: 100 }
-    )
+      max_tokens: 100,
+      temperature: 0,
+    })
 
-    const content = response.content
+    const content = response.choices[0]?.message?.content
     if (!content) throw new Error('No response')
 
     const parsed = JSON.parse(content)
@@ -253,6 +294,10 @@ export function humanizeResponse(
     }
   }
 
+  // BUG-16 FIX: Name insertion was broken — was inserting AFTER first character
+  // ("✅ Done!" → "✅ Hey Yash!  Done!" was broken)
+  // Now: only prepend name if response doesn't already have a greeting,
+  // and insert CLEANLY at the very start (not after char[0])
   if (userName && userName !== 'there' && !response.includes(userName)) {
     const alreadyHasGreeting = /^(hey|hi|hello|namaste|arre|haan|ok)/i.test(response)
     // Only 30% of the time — keep it natural, not repetitive
@@ -282,8 +327,9 @@ export async function extractStructuredData(
       .map(([key, desc]) => `${key}: ${desc}`)
       .join('\n')
 
-    const response = await geminiCompletion(
-      [
+    const response = await getGroqClient().chat.completions.create({
+      model: 'llama-3.1-8b-instant',
+      messages: [
         {
           role: 'system',
           content: `Extract data matching this schema. Return ONLY valid JSON.\nSchema:\n${schemaDesc}`,
@@ -293,10 +339,11 @@ export async function extractStructuredData(
           content: message.substring(0, 500),
         },
       ],
-      { model: AI_MODELS.CHAT_PRIMARY, temperature: 0, maxTokens: 200 }
-    )
+      max_tokens: 200,
+      temperature: 0,
+    })
 
-    const content = response.content
+    const content = response.choices[0]?.message?.content
     if (!content) return {}
 
     return JSON.parse(content)

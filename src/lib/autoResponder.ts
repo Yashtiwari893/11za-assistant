@@ -2,7 +2,7 @@
 // AI Auto-Responder — RAG/general chat fallback, invoked after feature handlers.
 
 import { getSupabaseClient } from '@/lib/infrastructure/database'
-import { geminiCompletion } from '@/lib/ai/provider'
+import { getGroqClient } from '@/lib/ai/clients'
 import { sendWhatsAppMessage } from '@/lib/whatsapp/client'
 import { getContext } from '@/lib/infrastructure/sessionContext'
 import { AI_MODELS, APP, WHATSAPP_AUTH_TOKEN, WHATSAPP_ORIGIN } from '@/config'
@@ -215,20 +215,18 @@ async function markMessageAsResponded(messageId: string): Promise<void> {
 async function generateLlmReply(params: GenerateLlmReplyParams): Promise<string | null> {
   const { systemPrompt, history, userText } = params
 
-  const response = await geminiCompletion(
-    [
+  const completion = await getGroqClient().chat.completions.create({
+    model: AI_MODELS.AUTO_RESPONDER,
+    messages: [
       { role: 'system', content: systemPrompt },
-      ...history as any,
+      ...history,
       { role: 'user', content: userText },
     ],
-    {
-      model: AI_MODELS.AUTO_RESPONDER,
-      temperature: GROQ_TEMPERATURE,
-      maxTokens: APP.MAX_REPLY_TOKENS,
-    }
-  )
+    temperature: GROQ_TEMPERATURE,
+    max_tokens: APP.MAX_REPLY_TOKENS,
+  })
 
-  const raw = response.content?.trim()
+  const raw = completion.choices[0]?.message?.content?.trim()
   if (!raw || raw.length < 2) return null
 
   return raw.replace(FORBIDDEN_AI_PHRASE_PATTERN, 'available information')
@@ -322,10 +320,10 @@ export async function generateAutoResponse(
     return { success: true, response: reply, sent: true }
 
   } catch (err: unknown) {
-    // Known recoverable error: Gemini quota/rate limit
+    // Known recoverable error: Groq rate limit
     if (typeof err === 'object' && err !== null && (err as { status?: number }).status === 429) {
-      console.warn('[autoResponder] Gemini quota/rate limit hit')
-      return { success: false, error: 'AI service busy or quota exceeded — please check console or try again later' }
+      console.warn('[autoResponder] Groq rate limit hit')
+      return { success: false, error: 'AI service busy — please try again in a moment' }
     }
 
     console.error('[autoResponder] Unexpected error:', err)

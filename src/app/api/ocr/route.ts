@@ -27,23 +27,19 @@ export async function POST(req: NextRequest) {
     const base64 = Buffer.from(arrayBuffer).toString('base64')
     const mimeType = image.type
 
-    // Call Gemini OCR
-    const { getGeminiClient } = await import('@/lib/ai/clients')
-    const gemini = getGeminiClient()
-    const { AI_MODELS } = await import('@/config')
-    const model = gemini.getGenerativeModel({ model: AI_MODELS.CHAT_PRIMARY })
+    // Call Mistral OCR
+    const Mistral = (await import('@mistralai/mistralai')).Mistral
+    const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY! })
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          data: base64,
-          mimeType: mimeType
-        }
-      },
-      'Extract all text from this image faithfully. If it is a document, maintain the structure. Use markdown if helpful.'
-    ])
+    const ocrResponse = await mistral.ocr.process({
+      model: 'mistral-ocr-latest',
+      document: {
+        type: 'image_url',
+        imageUrl: `data:${mimeType};base64,${base64}`
+      }
+    })
 
-    const extractedText = result.response.text() || ''
+    const extractedText = ocrResponse.pages?.map((p: any) => p.markdown || p.text || '').join('\n\n') || ''
 
     if (!shouldStore || !extractedText) {
       return NextResponse.json({ text: extractedText, stored: false })

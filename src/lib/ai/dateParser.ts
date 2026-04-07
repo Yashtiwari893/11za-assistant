@@ -2,7 +2,7 @@
 // Natural Language Date/Time Parser — Production-grade
 // "kal 11 bje", "har Sunday 9am", "parso shaam" → JavaScript Date
 
-import { getGeminiClient } from '@/lib/ai/clients'
+import { getGroqClient } from '@/lib/ai/clients'
 import { AI_MODELS, APP } from '@/config'
 
 const DEFAULT_TZ = APP.DEFAULT_TIMEZONE
@@ -180,7 +180,7 @@ export async function parseDateTime(
   const quick = quickParse(cleanText)
   if (quick && quick.confidence >= 0.9) return quick
 
-  // ── Step 2: Gemini NLU parse ─────────────────────────────────
+  // ── Step 2: Groq NLU parse ─────────────────────────────────
   const now = new Date()
   const nowIST = new Intl.DateTimeFormat('en-IN', {
     timeZone: userTimezone,
@@ -189,20 +189,18 @@ export async function parseDateTime(
   }).format(now)
 
   try {
-    const gemini = getGeminiClient()
-    const model = gemini.getGenerativeModel({ 
-        model: AI_MODELS.DATE_PARSER,
-        generationConfig: {
-            temperature: 0.05,
-            maxOutputTokens: 200,
-            responseMimeType: "application/json"
-        }
+    const response = await getGroqClient().chat.completions.create({
+      model: AI_MODELS.DATE_PARSER,
+      max_tokens: 200,
+      temperature: 0.05,              // Very low — deterministic output
+      response_format: { type: 'json_object' },
+      messages: [{
+        role: 'user',
+        content: buildPrompt(cleanText, nowIST, userTimezone)
+      }]
     })
 
-    const prompt = buildPrompt(cleanText, nowIST, userTimezone)
-    
-    const result = await model.generateContent(prompt)
-    const raw = result.response.text()
+    const raw = response.choices[0]?.message?.content ?? ''
     const parsed = JSON.parse(raw)
 
     // ── GUARDRAIL 3: Validate parsed result ───────────────────

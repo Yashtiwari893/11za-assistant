@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getSupabaseClient } from "@/lib/infrastructure/database"
+import { getGroqClient } from "@/lib/ai/clients"
 import { AI_MODELS } from "@/config"
 
 const supabaseAdmin = getSupabaseClient()
@@ -27,23 +28,21 @@ export async function POST(req: NextRequest) {
     // Note: We use the context from the PDF file provided
     const userPrompt = `Context from PDF file:\n${context}\n\nUser Question: ${message}`
 
-    // 3. Stream from Gemini
-    const { getGeminiClient } = await import("@/lib/ai/clients")
-    const gemini = getGeminiClient()
-    const model = gemini.getGenerativeModel({ model: AI_MODELS.CHAT_FALLBACK })
-
-    const result = await model.generateContentStream({
-      contents: [
-        { role: "user", parts: [{ text: "You are a helpful assistant. Use ONLY the provided context (from RAG storage) to answer questions. If info is missing, say you don't know." }] },
-        { role: "user", parts: [{ text: userPrompt }] }
-      ]
+    // 3. Stream from Groq (llama-3.3-70b-versatile)
+    const completion = await getGroqClient().chat.completions.create({
+      model: AI_MODELS.CHAT_FALLBACK,
+      messages: [
+        { role: "system", content: "You are a helpful assistant. Use ONLY the provided context to answer questions. If info is missing, say you don't know." },
+        { role: "user", content: userPrompt }
+      ],
+      stream: true
     })
 
     // 4. Return the stream
     const stream = new ReadableStream({
       async start(controller) {
-        for await (const chunk of result.stream) {
-          const content = chunk.text()
+        for await (const chunk of completion) {
+          const content = chunk.choices[0]?.delta?.content || ""
           if (content) {
             controller.enqueue(new TextEncoder().encode(content))
           }

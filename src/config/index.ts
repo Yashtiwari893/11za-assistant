@@ -25,7 +25,6 @@ export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 export const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 export const MISTRAL_API_KEY = process.env.MISTRAL_API_KEY || ''
-export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
 
 // ─── WhatsApp / 11za ──────────────────────────────────────────
 
@@ -62,16 +61,15 @@ export const WEBHOOK_VERIFY_TOKEN = optionalEnv('WEBHOOK_VERIFY_TOKEN')
 // ─── AI Model Configuration ──────────────────────────────────
 
 export const AI_MODELS = {
-  INTENT_CLASSIFIER: 'gemini-3-flash',
-  DATE_PARSER: 'gemini-3-flash',
-  AUTO_RESPONDER: 'gemini-3-flash',
-  CHAT_PRIMARY: 'gemini-3-flash',
-  CHAT_FALLBACK: 'gemini-3-flash',
-  LANGUAGE_DETECT: 'gemini-3-flash',
-  SYSTEM_PROMPT_GEN: 'gemini-3-flash',
-  SENTIMENT: 'gemini-3-flash',
-  STT: 'gemini-3-flash',
-  EMBEDDING: 'text-embedding-004',
+  INTENT_CLASSIFIER: 'llama-3.3-70b-versatile',
+  DATE_PARSER: 'llama-3.1-8b-instant',
+  AUTO_RESPONDER: 'llama-3.3-70b-versatile',
+  CHAT_PRIMARY: 'llama-3.1-8b-instant',
+  CHAT_FALLBACK: 'llama-3.3-70b-versatile',
+  LANGUAGE_DETECT: 'llama3-8b-8192',
+  SYSTEM_PROMPT_GEN: 'llama-3.3-70b-versatile',
+  SENTIMENT: 'llama-3.1-8b-instant',
+  STT: 'whisper-large-v3',
 } as const
 
 // ─── Application Constants ────────────────────────────────────

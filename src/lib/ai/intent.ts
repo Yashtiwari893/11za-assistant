@@ -1,4 +1,4 @@
-import { getGeminiClient } from '@/lib/ai/clients'
+import { getGroqClient } from '@/lib/ai/clients'
 import { AI_MODELS } from '@/config'
 import { retryWithExponentialBackoff } from '@/lib/infrastructure/errorHandler'
 import type { Intent, IntentResult } from '@/types'
@@ -134,31 +134,30 @@ export async function classifyIntent(
     : ''
 
   try {
-    const resultJson = await retryWithExponentialBackoff(
-      async () => {
-        const gemini = getGeminiClient()
-        const model = gemini.getGenerativeModel({ 
-            model: AI_MODELS.INTENT_CLASSIFIER,
-            generationConfig: {
-                temperature: 0.05,
-                maxOutputTokens: 400,
-                responseMimeType: "application/json"
-            }
-        })
-
-        const prompt = `${SYSTEM_PROMPT}\n\nCurrent time (IST): ${timeStr}. User language: ${lang}.${contextHint}${historyStr}\n\nUser message: "${message}"`
-        
-        const response = await model.generateContent(prompt)
-        const text = response.response.text()
-        return JSON.parse(text)
-      },
+    const completion = await retryWithExponentialBackoff(
+      async () => getGroqClient().chat.completions.create({
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Current time (IST): ${timeStr}. User language: ${lang}.${contextHint}${historyStr}\n\nUser message: "${message}"`
+          }
+        ],
+        model: AI_MODELS.INTENT_CLASSIFIER,
+        temperature: 0.05,
+        response_format: { type: 'json_object' },
+        max_tokens: 400,
+      }),
       2 // 2 retries on failure
     )
 
+    const raw = completion.choices[0]?.message?.content || '{}'
+    const result = JSON.parse(raw)
+
     return {
-      intent: (resultJson.intent as Intent) || 'UNKNOWN',
-      confidence: typeof resultJson.confidence === 'number' ? resultJson.confidence : 0,
-      extractedData: resultJson.extractedData || resultJson // Handle both formats
+      intent: (result.intent as Intent) || 'UNKNOWN',
+      confidence: typeof result.confidence === 'number' ? result.confidence : 0,
+      extractedData: result.extractedData || result // Handle both formats
     }
   } catch (err) {
     console.error('[classifyIntent] Error:', err)

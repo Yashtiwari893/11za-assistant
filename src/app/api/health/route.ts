@@ -1,6 +1,7 @@
 // src/app/api/health/route.ts
 import { NextResponse } from 'next/server'
 import { getSupabaseClient } from '@/lib/infrastructure/database'
+import { getGroqClient } from '@/lib/ai/clients'
 
 export async function GET() {
   const status = {
@@ -21,10 +22,9 @@ export async function GET() {
        console.error('[Health] DB check failed:', error.message)
     }
 
-    // 2. Check AI (Gemini)
-    const { getGeminiClient } = await import('@/lib/ai/clients')
-    const gemini = getGeminiClient()
-    if (gemini) {
+    // 2. Check AI (Groq) - just connectivity, not a completion
+    const groq = getGroqClient()
+    if (groq) {
       status.ai = 'up'
     }
 
