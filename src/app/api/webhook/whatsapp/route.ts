@@ -569,13 +569,16 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Mark as responded ATOMICALLY
-      try {
-        await supabaseAdmin.from('whatsapp_messages')
-          .update({ is_responded: true, response_sent_at: new Date().toISOString() })
-          .eq('message_id', messageId)
-      } catch (markErr) {
-        logger.error('Failed to mark as responded', { messageId }, markErr as Error)
+      // Mark as responded ATOMICALLY only if handled by a feature
+      // (The autoResponder handles its own claim logic internally)
+      if (isHandled) {
+        try {
+          await supabaseAdmin.from('whatsapp_messages')
+            .update({ is_responded: true, response_sent_at: new Date().toISOString() })
+            .eq('message_id', messageId)
+        } catch (markErr) {
+          logger.error('Failed to mark as responded', { messageId }, markErr as Error)
+        }
       }
 
     } catch (featureErr) {
