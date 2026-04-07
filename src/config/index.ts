@@ -62,15 +62,15 @@ export const WEBHOOK_VERIFY_TOKEN = optionalEnv('WEBHOOK_VERIFY_TOKEN')
 // ─── AI Model Configuration ──────────────────────────────────
 
 export const AI_MODELS = {
-  INTENT_CLASSIFIER: 'gemini-1.5-flash',
-  DATE_PARSER: 'gemini-1.5-flash',
-  AUTO_RESPONDER: 'gemini-1.5-flash',
-  CHAT_PRIMARY: 'gemini-1.5-flash',
-  CHAT_FALLBACK: 'gemini-1.5-flash',
-  LANGUAGE_DETECT: 'gemini-1.5-flash',
-  SYSTEM_PROMPT_GEN: 'gemini-1.5-flash',
-  SENTIMENT: 'gemini-1.5-flash',
-  STT: 'gemini-1.5-flash',
+  INTENT_CLASSIFIER: 'gemini-3-flash',
+  DATE_PARSER: 'gemini-3-flash',
+  AUTO_RESPONDER: 'gemini-3-flash',
+  CHAT_PRIMARY: 'gemini-3-flash',
+  CHAT_FALLBACK: 'gemini-3-flash',
+  LANGUAGE_DETECT: 'gemini-3-flash',
+  SYSTEM_PROMPT_GEN: 'gemini-3-flash',
+  SENTIMENT: 'gemini-3-flash',
+  STT: 'gemini-3-flash',
   EMBEDDING: 'text-embedding-004',
 } as const
 

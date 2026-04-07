@@ -30,7 +30,8 @@ export async function POST(req: NextRequest) {
     // Call Gemini OCR
     const { getGeminiClient } = await import('@/lib/ai/clients')
     const gemini = getGeminiClient()
-    const model = gemini.getGenerativeModel({ model: 'gemini-2.0-flash' })
+    const { AI_MODELS } = await import('@/config')
+    const model = gemini.getGenerativeModel({ model: AI_MODELS.CHAT_PRIMARY })
 
     const result = await model.generateContent([
       {

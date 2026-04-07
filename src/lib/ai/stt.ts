@@ -79,7 +79,7 @@ export async function speechToText(audioUrl: string, authToken?: string): Promis
         // ── Gemini transcription ────────────────────────────
         const { getGeminiClient } = await import('@/lib/ai/clients')
         const gemini = getGeminiClient()
-        const model = gemini.getGenerativeModel({ model: 'gemini-1.5-flash' })
+        const model = gemini.getGenerativeModel({ model: AI_MODELS.STT })
 
         const result = await model.generateContent([
           {
