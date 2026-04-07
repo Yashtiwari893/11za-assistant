@@ -19,22 +19,15 @@ const DUPLICATE_TIME_WINDOW_MS = 10 * 60 * 1000
 function cleanReminderTitle(raw: string): string {
   let cleaned = raw
     // Action/instruction words
-    .replace(/\b(remind|reminder|yaad|dilana|dilao|set|karo|karna|please|bhai|yaar|mujhe|mein|ko|ka|ki|ke)\b/gi, '')
-    // Time context words
-    .replace(/\b(kal|aaj|parso|subah|dopahar|shaam|raat|tonight|tomorrow|today|cal)\b/gi, '')
+    .replace(/\b(remind|reminder|yaad|dilana|dilao|set|karo|karna|please|bhai|yaar|mein|ko|ka|ki|ke)\b/gi, '')
+    // Time markers (explicit)
+    .replace(/\b(kal|aaj|parso|subah|dopahar|shaam|raat|tonight|tomorrow|today|cal|som|mangal|budh|guru|shukra|shani|ravi)\b/gi, '')
     .replace(/\b(bje|baje|bajey|am|pm|AM|PM|o'clock|oclock|baj[ey])\b/gi, '')
-    // Days of week
-    .replace(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
-    .replace(/\b(somwar|mangalwar|budhwar|guruwar|shukrawar|shaniwar|raviwar)\b/gi, '')
-    // Months
-    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/gi, '')
-    // Structural Hinglish filler
-    .replace(/\b(mujhe|main|total|teen|char|ek|do|dusra|teesra|karne|hain|date|hai|aur|wala|wali|pe|par|laga|de|na)\b/gi, '')
-    // Time patterns
+    // Structural Hinglish fillers (keep numbers like 'ek', 'do' if they aren't followed by baje/time)
+    .replace(/\b(mujhe|main|total|karne|hain|date|hai|aur|pe|par|laga|de|na)\b/gi, '')
+    // Specific time patterns (digits followed by bje/baje/am/pm)
     .replace(/\b\d{1,2}:\d{2}\b/g, '')
-    .replace(/\b\d{1,2}\s*bje\b/gi, '')
-    .replace(/\b\d{1,2}\s*baje\b/gi, '')
-    .replace(/\b\d{1,2}\s*(am|pm)\b/gi, '')
+    .replace(/\b\d{1,2}\s*(bje|baje|bajey|am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
 
@@ -43,15 +36,16 @@ function cleanReminderTitle(raw: string): string {
     cleaned = cleaned.substring(0, 50).replace(/\s+\S*$/, '').trim()
   }
 
-  // If cleaning removed everything, take first 5 meaningful words from original
+  // If cleaning removed everything, fallback to original without common prefixes
   if (cleaned.length < 3) {
     const words = raw.split(/\s+/).filter(w =>
-      w.length > 2 && !/^(mujhe|mein|karo|karna|set|please|bhai|kal|aaj|hai|ka|ki|ke|ko|do|na|ek|teen|total|hain)$/i.test(w)
+      w.length > 1 && !/^(remind|reminder|set|karo|karna|please|hai|ka|ki|ke|ko|do|na|ek|hai)$/i.test(w)
     )
-    cleaned = words.slice(0, 5).join(' ').trim()
+    cleaned = words.slice(0, 6).join(' ').trim()
   }
 
-  return cleaned.length > 2 ? cleaned : 'Reminder'
+  // Final sanity: if still empty, use a generic but safe label
+  return cleaned.length > 1 ? cleaned : 'Task'
 }
 
 // ─── SET REMINDER ─────────────────────────────────────────────

@@ -136,10 +136,10 @@ function quickParse(text: string): ParsedDateTime | null {
   const now = new Date()
 
   // ── Relative: "X seconds baad" ────────────────────────────
-  const secMatch = lower.match(/(\d+)\s*(?:sec(?:ond)?s?)\s*(?:baad|later|bad)?/)
+  const secMatch = lower.match(/^(\d+)\s*(?:sec(?:ond)?s?)\s*(?:baad|later|bad)?$/)
   if (secMatch) {
     const secs = parseInt(secMatch[1], 10)
-    if (secs > 0 && secs <= 86400) {          // cap at 24h for sanity
+    if (secs > 0 && secs <= 86400) {
       const date = new Date(now.getTime() + secs * 1000)
       return {
         ...EMPTY,
@@ -151,7 +151,7 @@ function quickParse(text: string): ParsedDateTime | null {
   }
 
   // ── Relative: "X minutes baad" ────────────────────────────
-  const minMatch = lower.match(/(\d+)\s*(?:min(?:ute)?s?)\s*(?:baad|later|bad)?/)
+  const minMatch = lower.match(/^(\d+)\s*(?:min(?:ute)?s?)\s*(?:baad|later|bad)?$/)
   if (minMatch) {
     const mins = parseInt(minMatch[1], 10)
     if (mins > 0 && mins <= 1440) {
@@ -166,7 +166,7 @@ function quickParse(text: string): ParsedDateTime | null {
   }
 
   // ── Relative: "X ghante baad" ─────────────────────────────
-  const hrMatch = lower.match(/(\d+)\s*(?:ghante?|hours?|hr)\s*(?:baad|later|bad)?/)
+  const hrMatch = lower.match(/^(\d+)\s*(?:ghante?|hours?|hr)\s*(?:baad|later|bad)?$/)
   if (hrMatch) {
     const hrs = parseInt(hrMatch[1], 10)
     if (hrs > 0 && hrs <= 48) {
@@ -180,17 +180,59 @@ function quickParse(text: string): ParsedDateTime | null {
     }
   }
 
-  // ── TIME REGEX for recurring patterns ─────────────────────
-  // Only match if a time word or digit+period is present (avoid false positives)
-  // Pattern: digit(s) + optional :mm + optional period keyword
+  // ── One-shot: "kal/aaj/parso + time" ─────────────────────────────────
+  // Pattern: (kal|aaj|parso)? digit (optional :mm) (period marker)
+  const ONE_SHOT_TIME_RE = /\b(kal|aaj|today|tomorrow|parso|cal)?\b.*?\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|bje|baje|bajey)\b/i
+  const oneShotMatch = lower.match(ONE_SHOT_TIME_RE)
+
+  if (oneShotMatch) {
+    const dayMarker = oneShotMatch[1] ? oneShotMatch[1].toLowerCase() : ''
+    const hour = parseInt(oneShotMatch[2], 10)
+    const min = oneShotMatch[3] ? parseInt(oneShotMatch[3], 10) : 0
+    const period = oneShotMatch[4].toLowerCase()
+
+    // Extract properly using the core util
+    // Construct a pseudo-match array for extractTime: [full, hour, min, period]
+    const pseudoMatch: RegExpMatchArray = [oneShotMatch[0], oneShotMatch[2], oneShotMatch[3], oneShotMatch[4]] as any
+    const timeStr = extractTime(pseudoMatch, lower)
+    const [hh, mm] = timeStr.split(':').map(Number)
+
+    const targetDate = new Date(now)
+    if (/\b(kal|tomorrow|cal)\b/.test(dayMarker) || (dayMarker === '' && /\b(kal|tomorrow|cal)\b/.test(lower))) {
+      targetDate.setDate(targetDate.getDate() + 1)
+    } else if (/\bparso\b/.test(dayMarker) || (dayMarker === '' && /\bparso\b/.test(lower))) {
+      targetDate.setDate(targetDate.getDate() + 2)
+    }
+
+    targetDate.setHours(hh, mm, 0, 0)
+
+    // If no day keyword and the time is already past → push to tomorrow
+    const isExplicitDay = /\b(kal|tomorrow|cal|parso|aaj|today)\b/.test(lower)
+    if (!isExplicitDay && targetDate.getTime() < now.getTime() - 60_000) {
+      targetDate.setDate(targetDate.getDate() + 1)
+    }
+
+    const dayLabel = targetDate.getDate() === now.getDate() + 1 ? 'Tomorrow' :
+                     targetDate.getDate() === now.getDate() + 2 ? 'Day after tomorrow' : 'Today'
+    const displayHour = hh % 12 || 12
+    const ampmLabel = hh >= 12 ? 'PM' : 'AM'
+    const displayMin = mm > 0 ? `:${String(mm).padStart(2, '0')}` : ''
+
+    return {
+      ...EMPTY,
+      date: targetDate,
+      confidence: 0.95,
+      humanReadable: `${dayLabel} at ${displayHour}${displayMin} ${ampmLabel}`,
+    }
+  }
+
+  // ── Recurring Patterns ─────────────────────
   const TIME_PATTERN = /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|bje|baje|bajey)?\b/
 
-  // ── Recurring: daily ──────────────────────────────────────
+  // Daily
   if (/\b(har\s*din|daily|every\s*day|roz)\b/.test(lower)) {
     const timeMatch = lower.match(TIME_PATTERN)
-    // Only use timeMatch if the digit looks like a clock hour (1-23)
-    const hour = timeMatch ? parseInt(timeMatch[1], 10) : NaN
-    const recurrenceTime = (timeMatch && hour >= 1 && hour <= 23)
+    const recurrenceTime = (timeMatch && parseInt(timeMatch[1], 10) <= 23)
       ? extractTime(timeMatch, lower)
       : '09:00'
     return {
@@ -203,11 +245,10 @@ function quickParse(text: string): ParsedDateTime | null {
     }
   }
 
-  // ── Recurring: weekly ─────────────────────────────────────
+  // Weekly
   if (/\b(har\s*hafta|weekly|every\s*week)\b/.test(lower)) {
     const timeMatch = lower.match(TIME_PATTERN)
-    const hour = timeMatch ? parseInt(timeMatch[1], 10) : NaN
-    const recurrenceTime = (timeMatch && hour >= 1 && hour <= 23)
+    const recurrenceTime = (timeMatch && parseInt(timeMatch[1], 10) <= 23)
       ? extractTime(timeMatch, lower)
       : '09:00'
     return {
@@ -220,24 +261,7 @@ function quickParse(text: string): ParsedDateTime | null {
     }
   }
 
-  // ── Recurring: monthly ────────────────────────────────────
-  if (/\b(har\s*mahina|monthly|every\s*month)\b/.test(lower)) {
-    const timeMatch = lower.match(TIME_PATTERN)
-    const hour = timeMatch ? parseInt(timeMatch[1], 10) : NaN
-    const recurrenceTime = (timeMatch && hour >= 1 && hour <= 23)
-      ? extractTime(timeMatch, lower)
-      : '09:00'
-    return {
-      ...EMPTY,
-      isRecurring: true,
-      recurrence: 'monthly',
-      recurrenceTime,
-      confidence: 0.85,
-      humanReadable: `Every month at ${recurrenceTime}`,
-    }
-  }
-
-  return null  // Groq pe jaao
+  return null
 }
 
 // ─── GROQ PROMPT ─────────────────────────────────────────────
@@ -250,11 +274,13 @@ Expression: "${text}"
 
 Hindi/Hinglish reference:
 - kal = tomorrow | aaj = today | parso = day after tomorrow | narsoo = 3 days from now
-- subah = morning (default 9 AM) | dopahar = afternoon (default 2 PM) | shaam = evening (default 6 PM) | raat = night (default 9 PM)
+- ek = 1 (Hindi number word) — IGNORE "ek" when it means "a/one" (e.g., "ek reminder set karo").
+  The TIME number is ALWAYS the digit immediately before bje/baje/bajey/am/pm.
+  Example: "mera ek reminder 1 bje" → time is 1 (bje) = 13:00, NOT 11 or 2.
+- subah = morning (9 AM) | dopahar = afternoon (2 PM) | shaam = evening (6 PM) | raat = night (9 PM)
 - bje / baje / bajey = o'clock (Indian time marker)
 - somwar=Monday, mangalwar=Tuesday, budhwar=Wednesday, guruwar=Thursday, shukrawar=Friday, shaniwar=Saturday, raviwar=Sunday
 - har din = every day | har hafta = every week | har mahina = every month
-- "cal" or "kal" = tomorrow
 
 ## CRITICAL AM/PM RULES (Indian Context — apply strictly)
 When user says a number with bje/baje/bajey or no period marker:
@@ -262,14 +288,12 @@ When user says a number with bje/baje/bajey or no period marker:
   - Hours 7–11 → AM (morning) UNLESS "shaam" or "raat" is present → then PM
   - Hour 12    → PM (noon) always
   - Hour 0     → AM (midnight)
-If user says explicit "am"/"pm" in English, honour it exactly.
 
 ## OUTPUT RULES
 - isoDateTime MUST include +05:30 IST offset.
-- recurrenceTime MUST be "HH:MM" 24-hour zero-padded (e.g. "09:00", "18:30").
+- recurrenceTime MUST be "HH:MM" 24-hour zero-padded.
 - confidence: float 0.0–1.0.
-- humanReadable: English phrase describing the parsed time.
-- If cannot parse: set isoDateTime=null, confidence=0, humanReadable="".
+- If cannot parse: set isoDateTime=null, confidence=0.
 
 Output ONLY this JSON object:
 {
@@ -279,7 +303,8 @@ Output ONLY this JSON object:
   "recurrenceTime": null,
   "confidence": 0.95,
   "humanReadable": "Tomorrow at 11:00 AM"
-}`
+}
+`
 }
 
 // ─── ADVANCE DATE IF IN PAST ──────────────────────────────────

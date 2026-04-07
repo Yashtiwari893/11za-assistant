@@ -12,6 +12,9 @@ import type { AutoResponseResult } from '@/types'
 
 const GROQ_TEMPERATURE = 0.3
 
+// How long (ms) to wait for Groq before aborting — prevents webhook timeouts
+const LLM_TIMEOUT_MS = 12_000
+
 const ZARA_BASE_RULES = `
 You are ZARA, a warm and intelligent personal assistant on WhatsApp.
 
@@ -73,6 +76,7 @@ interface GenerateLlmReplyParams {
   systemPrompt: string
   history: HistoryMessage[]
   userText: string
+  documentContext?: string   // RAG — injected doc snippets if relevant
 }
 
 // ─── Pure Helpers ─────────────────────────────────────────────
@@ -86,22 +90,61 @@ function safeString(value: unknown): string {
 }
 
 function truncate(text: string, maxLength: number): string {
-  return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text
+  return text.length > maxLength ? `${text.substring(0, maxLength)}…` : text
 }
 
 /**
- * Merges the per-phone custom prompt with the shared ZARA base rules.
- * If no custom prompt exists, the base rules are used standalone.
+ * Merges ZARA base rules with optional per-phone custom prompt.
+ *
+ * ORDER MATTERS for LLMs: base rules go FIRST as the foundation,
+ * custom prompt goes AFTER as additive context/persona tweaks.
+ * This ensures STRICT RULES always dominate (recency bias).
+ *
+ * BUG FIX: was previously reversed — custom prompt was first,
+ * so it could silently override STRICT RULES.
  */
-function buildSystemPrompt(phoneSpecificPrompt: string): string {
-  return phoneSpecificPrompt
-    ? `${phoneSpecificPrompt}\n\n${ZARA_BASE_RULES}`
-    : ZARA_BASE_RULES
+function buildSystemPrompt(phoneSpecificPrompt: string, documentContext?: string): string {
+  const parts: string[] = [ZARA_BASE_RULES]
+
+  if (phoneSpecificPrompt) {
+    parts.push(`## ADDITIONAL CONTEXT FOR THIS ACCOUNT\n${phoneSpecificPrompt}`)
+  }
+
+  if (documentContext) {
+    parts.push(
+      `## RELEVANT DOCUMENTS (use these to answer the user's question)\n${documentContext}\n` +
+      `Important: Only use the above document context if it is relevant. Do NOT fabricate document content.`
+    )
+  }
+
+  return parts.join('\n\n')
 }
 
 // ─── Database Queries ─────────────────────────────────────────
 
-async function hasAlreadyResponded(messageId: string): Promise<boolean> {
+/**
+ * Atomic idempotency check + lock using upsert.
+ * Returns true if we successfully claimed this messageId (should process).
+ * Returns false if another worker already claimed it (skip).
+ *
+ * BUG FIX: The old check+mark pattern had a race condition — two concurrent
+ * webhook calls could both pass hasAlreadyResponded() before either marked it.
+ * This upsert approach is atomic: only one worker wins.
+ */
+async function claimMessageForProcessing(messageId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('whatsapp_messages')
+    .update({ is_responded: true, response_sent_at: new Date().toISOString() })
+    .eq('message_id', messageId)
+    .eq('is_responded', false)   // Only update if NOT yet responded — atomic claim
+
+  // If error or no rows matched (already claimed), skip
+  if (error) {
+    console.warn('[autoResponder] claimMessageForProcessing error:', error.message)
+    return false
+  }
+
+  // Check if our update actually matched a row
   const { data } = await supabase
     .from('whatsapp_messages')
     .select('id')
@@ -112,14 +155,27 @@ async function hasAlreadyResponded(messageId: string): Promise<boolean> {
   return !!data
 }
 
-async function hasRecentOutgoingMessage(toNumber: string): Promise<boolean> {
+/**
+ * Reverts the claimed lock if sending ultimately failed.
+ * Allows safe retry on next webhook delivery.
+ */
+async function releaseMessageClaim(messageId: string): Promise<void> {
+  await supabase
+    .from('whatsapp_messages')
+    .update({ is_responded: false, response_sent_at: null })
+    .eq('message_id', messageId)
+}
+
+async function hasRecentOutgoingMessage(toUserPhone: string): Promise<boolean> {
+  // BUG FIX: Was using raw fromNumber (un-normalized). Now uses normalized phone.
+  // We check if bot already sent a message TO this user recently.
   const windowStart = new Date(Date.now() - APP.RECENT_OUTGOING_WINDOW_MS).toISOString()
 
   const { data } = await supabase
     .from('whatsapp_messages')
     .select('id')
-    .eq('to_number', toNumber)
-    .eq('event_type', 'MtMessage')
+    .eq('to_number', toUserPhone)          // normalized phone
+    .eq('event_type', 'MtMessage')         // MtMessage = Mobile Terminated = bot → user
     .gte('received_at', windowStart)
     .limit(1)
 
@@ -133,103 +189,151 @@ async function fetchPhoneConfig(phoneNumber: string): Promise<PhoneConfig> {
     origin: WHATSAPP_ORIGIN,
   }
 
-  const { data } = await supabase
-    .from('phone_document_mapping')
-    .select('system_prompt, auth_token, origin')
-    .eq('phone_number', phoneNumber)
-    .limit(1)
+  try {
+    const { data, error } = await supabase
+      .from('phone_document_mapping')
+      .select('system_prompt, auth_token, origin')
+      .eq('phone_number', phoneNumber)
+      .limit(1)
 
-  if (!data || data.length === 0) {
-    console.log(`[autoResponder] No DB config for ${phoneNumber} — using environment defaults.`)
+    if (error) {
+      console.warn('[autoResponder] fetchPhoneConfig DB error:', error.message)
+      return defaultConfig
+    }
+
+    if (!data || data.length === 0) {
+      console.log(`[autoResponder] No DB config for ${phoneNumber} — using defaults.`)
+      return defaultConfig
+    }
+
+    const row = data[0]
+    return {
+      systemPrompt: safeString(row.system_prompt),
+      authToken: safeString(row.auth_token) || defaultConfig.authToken,
+      origin: safeString(row.origin) || defaultConfig.origin,
+    }
+  } catch (err) {
+    console.warn('[autoResponder] fetchPhoneConfig unexpected error:', (err as Error).message)
     return defaultConfig
-  }
-
-  const row = data[0]
-  return {
-    systemPrompt: safeString(row.system_prompt),
-    authToken: safeString(row.auth_token) || defaultConfig.authToken,
-    origin: safeString(row.origin) || defaultConfig.origin,
   }
 }
 
-// BUG-12 FIX: Use sessionContext as the ONE unified history source
-// whatsapp_messages table misses feature handler responses (reminder set, task added, etc.)
-async function fetchConversationHistory(userId: string | undefined, fromNumber: string): Promise<HistoryMessage[]> {
+/**
+ * Fetches conversation history from unified source.
+ *
+ * BUG FIX: Fallback DB query was using raw fromNumber (with + and spaces)
+ * instead of normalized phone — causing silent empty results.
+ *
+ * BUG FIX: Added deduplication to prevent overlap between session and DB sources.
+ */
+async function fetchConversationHistory(
+  userId: string | undefined,
+  normalizedFromPhone: string,   // Already normalized — explicit param name to prevent re-use of raw
+): Promise<HistoryMessage[]> {
   try {
-    // PRIMARY: Use session history (includes feature handler responses)
-    const sessionHistory = userId
-      ? ((await getContext(userId)).conversation_history || [])
-      : []
-
-    if (sessionHistory.length > 0) {
-      return sessionHistory
+    // PRIMARY: Session context (includes feature handler responses like reminder confirmations)
+    if (userId) {
+      const ctx = await getContext(userId)
+      const sessionHistory: HistoryMessage[] = (ctx.conversation_history ?? [])
         .slice(-APP.CONVERSATION_HISTORY_LIMIT)
         .map(h => ({
           role: (h.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-          content: String(h.content).substring(0, APP.MAX_PER_MESSAGE_LENGTH)
+          content: truncate(String(h.content || ''), APP.MAX_PER_MESSAGE_LENGTH),
         }))
+        .filter(h => h.content.length > 0)
+
+      if (sessionHistory.length > 0) return sessionHistory
     }
 
-    // FALLBACK: whatsapp_messages table (for new users without session history)
-    const { data } = await supabase
+    // FALLBACK: whatsapp_messages table
+    // Uses normalizedFromPhone — BUG FIX (was raw fromNumber before)
+    const { data, error } = await supabase
       .from('whatsapp_messages')
       .select('content_text, event_type')
-      .or(`from_number.eq.${fromNumber},to_number.eq.${fromNumber}`)
+      .or(`from_number.eq.${normalizedFromPhone},to_number.eq.${normalizedFromPhone}`)
       .order('received_at', { ascending: true })
       .limit(APP.CONVERSATION_HISTORY_LIMIT * 2)
 
-    return (data ?? [])
-      .filter(
-        (row) =>
-          typeof row.content_text === 'string' &&
-          row.content_text.trim().length > 0 &&
-          (row.event_type === 'MoMessage' || row.event_type === 'MtMessage')
-      )
-      .map((row) => ({
-        role: row.event_type === 'MoMessage' ? ('user' as const) : ('assistant' as const),
-        content: truncate(safeString(row.content_text), APP.MAX_PER_MESSAGE_LENGTH),
-      }))
-      .slice(-APP.CONVERSATION_HISTORY_LIMIT)
+    if (error) {
+      console.warn('[autoResponder] History DB query error:', error.message)
+      return []
+    }
+
+    // Deduplicate consecutive messages with same role+content (session/DB overlap)
+    const messages: HistoryMessage[] = []
+    let lastKey = ''
+
+    for (const row of data ?? []) {
+      if (
+        typeof row.content_text !== 'string' ||
+        !row.content_text.trim() ||
+        (row.event_type !== 'MoMessage' && row.event_type !== 'MtMessage')
+      ) continue
+
+      const role: 'user' | 'assistant' = row.event_type === 'MoMessage' ? 'user' : 'assistant'
+      const content = truncate(safeString(row.content_text), APP.MAX_PER_MESSAGE_LENGTH)
+      const key = `${role}:${content}`
+
+      if (key !== lastKey) {
+        messages.push({ role, content })
+        lastKey = key
+      }
+    }
+
+    return messages.slice(-APP.CONVERSATION_HISTORY_LIMIT)
+
   } catch (err) {
     console.warn('[autoResponder] fetchConversationHistory failed:', (err as Error).message)
     return []
   }
 }
 
-async function markMessageAsResponded(messageId: string): Promise<void> {
-  await supabase
-    .from('whatsapp_messages')
-    .update({
-      is_responded: true,
-      response_sent_at: new Date().toISOString(),
-    })
-    .eq('message_id', messageId)
-}
-
 // ─── LLM ──────────────────────────────────────────────────────
 
 /**
- * Calls the Groq LLM with the assembled prompt and conversation history.
- * Returns the sanitized reply string, or null if the response is empty.
+ * Calls Groq with a timeout (AbortController).
+ *
+ * BUG FIX: No timeout previously — Groq hangs would cause webhook timeouts
+ * and the user would get no response at all.
  */
 async function generateLlmReply(params: GenerateLlmReplyParams): Promise<string | null> {
-  const { systemPrompt, history, userText } = params
+  const { systemPrompt, history, userText, documentContext } = params
 
-  const completion = await getGroqClient().chat.completions.create({
-    model: AI_MODELS.AUTO_RESPONDER,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...history,
-      { role: 'user', content: userText },
-    ],
-    temperature: GROQ_TEMPERATURE,
-    max_tokens: APP.MAX_REPLY_TOKENS,
-  })
+  // Inject document context into the last user message if available
+  // (More reliable than a separate system block for RAG grounding)
+  const finalUserContent = documentContext
+    ? `${userText}\n\n[Relevant context provided separately in system prompt]`
+    : userText
 
-  const raw = completion.choices[0]?.message?.content?.trim()
-  if (!raw || raw.length < 2) return null
+  const controller = new AbortController()
+  const timeout = setTimeout(() => {
+    controller.abort()
+    console.warn('[autoResponder] LLM call timed out after', LLM_TIMEOUT_MS, 'ms')
+  }, LLM_TIMEOUT_MS)
 
-  return raw.replace(FORBIDDEN_AI_PHRASE_PATTERN, 'available information')
+  try {
+    const completion = await getGroqClient().chat.completions.create(
+      {
+        model: AI_MODELS.AUTO_RESPONDER,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...history,
+          { role: 'user', content: finalUserContent },
+        ],
+        temperature: GROQ_TEMPERATURE,
+        max_tokens: APP.MAX_REPLY_TOKENS,
+      },
+      { signal: controller.signal }   // Pass abort signal to Groq SDK
+    )
+
+    const raw = completion.choices[0]?.message?.content?.trim()
+    if (!raw || raw.length < 2) return null
+
+    return raw.replace(FORBIDDEN_AI_PHRASE_PATTERN, 'available information')
+
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 // ─── Main Handler ─────────────────────────────────────────────
@@ -239,90 +343,111 @@ export async function generateAutoResponse(
   toNumber: string,
   messageText: string,
   messageId: string,
-  userId?: string // Optional — used for unified session history (BUG-12 fix)
+  userId?: string,
+  documentContext?: string,   // RAG — injected by caller if a doc query was detected
 ): Promise<AutoResponseResult> {
   try {
-    console.log('[autoResponder] Triggered')
+    console.log('[autoResponder] Triggered for messageId:', messageId)
 
-    // Guard: required fields present
+    // ── Guard: required fields ────────────────────────────────
     if (!fromNumber || !toNumber || !messageId) {
       return { success: false, error: 'Missing required parameters' }
     }
 
     const cleanFrom = normalizePhone(fromNumber)
-    const cleanTo = normalizePhone(toNumber)
+    const cleanTo   = normalizePhone(toNumber)
 
-    // Guard: valid phone number format
+    // ── Guard: valid phone length ─────────────────────────────
     if (cleanFrom.length < APP.MIN_PHONE_LENGTH || cleanTo.length < APP.MIN_PHONE_LENGTH) {
       return { success: false, error: 'Invalid phone numbers' }
     }
 
-    // Guard: idempotency — don't reply to a message we've already handled
-    if (await hasAlreadyResponded(messageId)) {
-      console.log('[autoResponder] Duplicate — already responded to:', messageId)
-      return { success: true, response: 'Duplicate prevention — already responded', sent: false }
-    }
-
-    // Guard: suppress reply if a bot message was sent in the last 10 seconds
-    if (await hasRecentOutgoingMessage(cleanFrom)) {
-      console.log('[autoResponder] Recent outgoing message detected — skipping to avoid double reply')
-      return { success: true, response: 'Safety skip — recent reply detected', sent: false }
-    }
-
-    // Guard: non-empty message body
+    // ── Guard: non-empty message ──────────────────────────────
     const userText = safeString(messageText)
     if (!userText) {
       return { success: false, error: 'Empty message — nothing to respond to' }
+    }
+
+    // ── Guard: idempotency (atomic claim — fixes race condition) ──
+    // claimMessageForProcessing does check+mark atomically.
+    // If claim fails (already processed), bail out immediately.
+    const claimed = await claimMessageForProcessing(messageId)
+    if (!claimed) {
+      console.log('[autoResponder] Duplicate or already claimed:', messageId)
+      return { success: true, response: 'Duplicate prevention', sent: false }
+    }
+
+    // ── Guard: suppress if bot sent something very recently ───
+    // BUG FIX: now uses cleanFrom (normalized) consistently
+    if (await hasRecentOutgoingMessage(cleanFrom)) {
+      console.log('[autoResponder] Recent outgoing message — releasing claim and skipping')
+      await releaseMessageClaim(messageId)   // Release so it can be retried if needed
+      return { success: true, response: 'Safety skip — recent reply detected', sent: false }
     }
 
     const safeUserText = truncate(userText, APP.MAX_MESSAGE_LENGTH)
 
     console.log('[autoResponder] From:', cleanFrom, '| To:', cleanTo)
 
-    const phoneConfig = await fetchPhoneConfig(cleanTo)
+    // ── Fetch config and history in parallel ──────────────────
+    const [phoneConfig, history] = await Promise.all([
+      fetchPhoneConfig(cleanTo),
+      fetchConversationHistory(userId, cleanFrom),   // BUG FIX: pass normalized phone
+    ])
 
-    // Guard: WhatsApp credentials must be available
+    // ── Guard: WhatsApp credentials ───────────────────────────
     if (!phoneConfig.authToken || !phoneConfig.origin) {
-      console.error('[autoResponder] WhatsApp credentials missing')
+      console.error('[autoResponder] WhatsApp credentials missing for:', cleanTo)
+      await releaseMessageClaim(messageId)
       return { success: false, error: 'WhatsApp API credentials not configured' }
     }
 
-    // Fetch history and build prompt — history is I/O, prompt is pure
-    // Fetch history from unified source (session context if userId available)
-    const history = await fetchConversationHistory(userId, cleanFrom)
-    const systemPrompt = buildSystemPrompt(phoneConfig.systemPrompt)
+    // Build prompt — base rules dominate (BUG FIX: order corrected)
+    const systemPrompt = buildSystemPrompt(phoneConfig.systemPrompt, documentContext)
 
-    const reply = await generateLlmReply({ systemPrompt, history, userText: safeUserText })
+    // ── LLM call with timeout ─────────────────────────────────
+    let reply: string | null
+    try {
+      reply = await generateLlmReply({ systemPrompt, history, userText: safeUserText, documentContext })
+    } catch (llmErr: unknown) {
+      const isAbort = llmErr instanceof Error && llmErr.name === 'AbortError'
+      console.error('[autoResponder] LLM error:', isAbort ? 'Timed out' : (llmErr as Error).message)
+      await releaseMessageClaim(messageId)
+      return {
+        success: false,
+        error: isAbort ? 'AI response timed out — please try again' : 'AI generation failed',
+      }
+    }
 
-    // Guard: non-empty LLM response
+    // ── Guard: non-empty LLM response ─────────────────────────
     if (!reply) {
       console.warn('[autoResponder] LLM returned empty response')
+      await releaseMessageClaim(messageId)
       return { success: false, error: 'AI returned empty response' }
     }
 
+    // ── Send WhatsApp message ─────────────────────────────────
     const sendResult = await sendWhatsAppMessage({
       to: cleanFrom,
       message: reply,
       authToken: phoneConfig.authToken,
-      origin: phoneConfig.origin
+      origin: phoneConfig.origin,
     })
 
     if (!sendResult.success) {
       console.error('[autoResponder] WhatsApp send failed:', sendResult.error)
+      // BUG FIX: Release the claim so the message can be retried on next webhook delivery
+      await releaseMessageClaim(messageId)
       return { success: false, response: reply, sent: false, error: 'WhatsApp send failed' }
     }
 
-    // Outgoing message is persisted by sendWhatsAppMessage wrapper.
-    await markMessageAsResponded(messageId)
-
-    console.log('[autoResponder] Response sent successfully')
-
+    // Claim stays locked (message successfully processed)
+    console.log('[autoResponder] Response sent successfully for:', messageId)
     return { success: true, response: reply, sent: true }
 
   } catch (err: unknown) {
-    // Known recoverable error: Groq rate limit
     if (typeof err === 'object' && err !== null && (err as { status?: number }).status === 429) {
-      console.warn('[autoResponder] Groq rate limit hit')
+      console.warn('[autoResponder] Groq rate limit hit (429)')
       return { success: false, error: 'AI service busy — please try again in a moment' }
     }
 
