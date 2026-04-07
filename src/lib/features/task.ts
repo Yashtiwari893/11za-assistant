@@ -332,60 +332,18 @@ export async function handleDeleteTask(params: {
   language: Language
   taskContent: string
   listName?: string
-  isGenericSearch?: boolean
   prefix?: string
 }) {
-  const { userId, phone, language, listName, isGenericSearch, prefix = '' } = params
+  const { userId, phone, language, listName, prefix = '' } = params
   
   // Strip action keywords from task content
   const rawTaskContent = params.taskContent
-    .replace(/\b(delete|remove|hata|hatao|mitao|clear|task|tasks|items|all|sab|everything)\b/gi, '')
+    .replace(/\b(delete|remove|hata|hatao|mitao|clear)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
   
-  const isBulk = isGenericSearch || 
-                 ['all', 'sab', 'everything', 'saare', 'pure'].includes(rawTaskContent.toLowerCase()) ||
-                 /\b(all|sab|everything|pure|saare)\b/i.test(params.taskContent)
-
-  // ─── CASE 1: BULK DELETE TASKS ──────────────────────────────
-  if (isBulk) {
-    let query = supabase.from('tasks').delete({ count: 'exact' }).eq('user_id', userId)
-    let listLabel = language === 'hi' ? 'saare' : 'all'
-
-    if (listName) {
-      const { data: lists } = await supabase
-        .from('lists')
-        .select('id, name')
-        .eq('user_id', userId)
-        .ilike('name', `%${normalizeListName(listName)}%`)
-        .limit(1)
-      
-      const list = lists?.[0]
-      if (list) {
-        query = query.eq('list_id', list.id)
-        listLabel = `*${list.name}*`
-      }
-    }
-
-    const { count, error } = await query
-    if (error) {
-      console.error('[task] Bulk task delete error:', error)
-      await sendWhatsAppMessage({ to: phone, message: errorMessage(language) })
-      return
-    }
-
-    await sendWhatsAppMessage({
-      to: phone,
-      message: prefix + (language === 'hi'
-        ? `🗑️ ${listLabel} tasks (${count ?? 0}) delete ho gaye!`
-        : `🗑️ Deleted ${count ?? 0} tasks from ${listLabel}!`)
-    })
-    return
-  }
-
-  // ─── CASE 2: DELETE BY NAME ─────────────────────────────────
   // Reject if nothing meaningful left or it's a generic word
-  const genericTerms = ['task', 'tasks', 'item', 'items', 'list', 'lists']
+  const genericTerms = ['task', 'tasks', 'item', 'items', 'all', 'everything', 'sab', 'saari', 'saare', 'list', 'lists']
   if (!rawTaskContent || genericTerms.includes(rawTaskContent.toLowerCase())) {
     await sendWhatsAppMessage({
       to: phone,
@@ -445,63 +403,62 @@ export async function handleDeleteList(params: {
   phone: string
   language: Language
   listName: string
-  isGenericSearch?: boolean
+  isBulk?: boolean
   prefix?: string
 }) {
-  const { userId, phone, language, isGenericSearch, prefix = '' } = params
-  const rawListName = params.listName
-    .replace(/\b(delete|remove|hata|hatao|mitao|clear|list|all|everything|sab|saari|saare|both|dono)\b/gi, '')
-    .replace(/\s+/g, ' ')
+  const { userId, phone, language, isBulk: isBulkFlag, prefix = '' } = params
+  const rawListName = (params.listName || '')
+    .replace(/\b(delete|remove|hata|hatao|mitao|clear|list|lists)\b/gi, '')
     .trim()
 
   const listName = normalizeListName(rawListName)
-  
-  // ─── CASE 1: BULK DELETE (All lists) ────────────────────────
-  const isBulk = isGenericSearch || 
-                 ['all', 'sab', 'everything', 'both', 'dono', 'pure', 'complete', 'saare'].includes(listName) ||
-                 /\b(all|sab|everything|both|dono|pure|saare|dono ke dono)\b/i.test(params.listName)
+
+  // ─── 1. BULK DELETE DETECTION ─────────────────────────────
+  const isBulkMatch = ['all', 'both', 'everything', 'sab', 'saari', 'saare', 'pure', 'complete', 'sabke sab'].includes(listName.toLowerCase()) || 
+                 /\b(all|both|everything|sab|saari|saare)\b/i.test(rawListName)
+
+  const isBulk = isBulkFlag || isBulkMatch
 
   if (isBulk) {
-    const { data: allLists } = await supabase
-      .from('lists')
-      .select('id')
-      .eq('user_id', userId)
-
+    const { data: allLists } = await supabase.from('lists').select('id, name').eq('user_id', userId)
+    
     if (!allLists || allLists.length === 0) {
       await sendWhatsAppMessage({
         to: phone,
-        message: prefix + (language === 'hi'
-          ? '📭 Delete karne ke liye koi list nahi mili।'
+        message: prefix + (language === 'hi' 
+          ? '📭 Delete karne ke liye koi list nahi mili।' 
           : '📭 No lists found to delete.')
       })
       return
     }
 
-    // Delete tasks first (cascade safety)
-    await supabase.from('tasks').delete().eq('user_id', userId)
-    // Delete lists
-    await supabase.from('lists').delete().eq('user_id', userId)
+    const listNames = allLists.map(l => `*${l.name}*`).join(', ')
+    
+    // Explicitly delete tasks then lists (manual cascade for safety)
+    const listIds = allLists.map(l => l.id)
+    await supabase.from('tasks').delete().in('list_id', listIds)
+    await supabase.from('lists').delete().in('id', listIds)
 
     await sendWhatsAppMessage({
       to: phone,
       message: prefix + (language === 'hi'
-        ? `✅ Aapki saari (${allLists.length}) lists aur unke tasks delete ho gaye hain!`
-        : `✅ All your lists (${allLists.length}) and their tasks have been deleted!`)
+        ? `✅ Aapki saari lists (${listNames}) delete ho gayi hain!`
+        : `✅ All your lists (${listNames}) have been deleted!`)
     })
     return
   }
 
-  // ─── CASE 2: DELETE BY EXACT NAME ───────────────────────────
-  if (!listName || ['task', 'tasks', 'list', 'lists', 'general'].includes(listName)) {
-    const { data: recentLists } = await supabase
+  // ─── 2. DEFAULT FALLBACK IF NO LIST NAME ───────────────────
+  if (!listName || listName === 'general') {
+    const { data: allLists } = await supabase
       .from('lists')
       .select('name')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(5)
 
-    const availableLists = recentLists && recentLists.length > 0
-      ? recentLists.map(item => `*${item.name}*`).join(', ')
+    const availableLists = allLists && allLists.length > 0
+      ? allLists.map(item => `*${item.name}*`).join(', ')
       : ''
 
     await sendWhatsAppMessage({
@@ -513,6 +470,7 @@ export async function handleDeleteList(params: {
     return
   }
 
+  // ─── 3. SINGLE LIST DELETE ────────────────────────────────
   const { data: lists } = await supabase
     .from('lists')
     .select('id, name')
@@ -544,7 +502,6 @@ export async function handleDeleteList(params: {
     return
   }
 
-  // Deleting the list will cascade delete tasks in a real prod DB
   await supabase.from('tasks').delete().eq('list_id', list.id)
   await supabase.from('lists').delete().eq('id', list.id)
 

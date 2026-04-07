@@ -102,6 +102,15 @@ Message: "Doodh ho gaya"
 Message: "Snooze kar do 30 min"
 → {"intent":"SNOOZE_REMINDER","confidence":0.95,"extractedData":{"snoozeMinutes":30}}
 
+Message: "Delete all lists"
+→ {"intent":"DELETE_LIST","confidence":1.0,"extractedData":{"isGenericSearch":true}}
+
+Message: "Both delete kar do"
+→ {"intent":"DELETE_LIST","confidence":0.95,"extractedData":{"isGenericSearch":true}}
+
+Message: "Dono task list mitao"
+→ {"intent":"DELETE_LIST","confidence":0.95,"extractedData":{"isGenericSearch":true}}
+
 ## RESPONSE FORMAT
 Return ONLY valid JSON. No explanation text.`
 
