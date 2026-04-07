@@ -461,6 +461,8 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             taskContent: extractedData.taskContent || processedMessage,
+            listName: extractedData.listName || undefined,
+            isGenericSearch: extractedData.isGenericSearch,
             prefix: abuseWarning
           })
           isHandled = true
@@ -472,6 +474,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             listName: extractedData.listName || 'general',
+            isGenericSearch: extractedData.isGenericSearch,
             prefix: abuseWarning
           })
           isHandled = true
