@@ -128,7 +128,7 @@ export async function classifyIntent(
   const contextHint = hints.length > 0 ? `\n\n[CONTEXT HINTS: ${hints.join(' | ')}]` : ''
 
   // ─── Conversation History (for full context awareness) ────────
-  const historyMessages = (context?.conversation_history || []).slice(-6) as Array<{role: string, content: string}>
+  const historyMessages = (context?.conversation_history || []).slice(-6) as Array<{ role: string, content: string }>
   const historyStr = historyMessages.length > 0
     ? `\n\n[RECENT CONVERSATION:\n${historyMessages.map(h => `${h.role === 'user' ? 'User' : 'Zara'}: ${h.content}`).join('\n')}\n]`
     : ''
