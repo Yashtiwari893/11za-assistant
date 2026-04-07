@@ -344,203 +344,219 @@ export async function POST(req: NextRequest) {
     const { intent, extractedData } = intentResult
 
     try {
-      switch (intent) {
-        case 'SET_REMINDER':
-          // BUG-04 FIX: Multi-reminder support
-          if (extractedData.isMultiReminder && Array.isArray(extractedData.reminderItems) && extractedData.reminderItems.length > 0) {
-            const fallbackItems = extractMultiReminderFallbackItems(processedMessage)
-            const llmItems = extractedData.reminderItems
-              .map((item, index) => ({
-                title: item.title?.trim() || `Reminder ${index + 1}`,
-                dateTimeText: item.dateTimeText?.trim() || ''
-              }))
-              .filter((item) => item.dateTimeText.length > 0)
+      // ─── 1. ATTEMPT FEATURE HANDLERS ────────────────────
+      try {
+        switch (intent) {
+          case 'SET_REMINDER':
+            // BUG-04 FIX: Multi-reminder support
+            if (extractedData.isMultiReminder && Array.isArray(extractedData.reminderItems) && extractedData.reminderItems.length > 0) {
+              const fallbackItems = extractMultiReminderFallbackItems(processedMessage)
+              const llmItems = extractedData.reminderItems
+                .map((item, index) => ({
+                  title: item.title?.trim() || `Reminder ${index + 1}`,
+                  dateTimeText: item.dateTimeText?.trim() || ''
+                }))
+                .filter((item) => item.dateTimeText.length > 0)
 
-            const reminderItems = fallbackItems.length >= llmItems.length ? fallbackItems : llmItems
-            const results: string[] = []
-            for (const item of reminderItems) {
+              const reminderItems = fallbackItems.length >= llmItems.length ? fallbackItems : llmItems
+              const results: string[] = []
+              for (const item of reminderItems) {
+                await handleSetReminder({
+                  userId: user.id,
+                  phone: cleanFromPhone,
+                  language: lang,
+                  message: processedMessage,
+                  dateTimeText: item.dateTimeText || processedMessage,
+                  reminderTitle: item.title,
+                  prefix: abuseWarning
+                })
+                results.push(item.title)
+              }
+              logger.info(`Multi-reminder: set ${results.length} reminders`, { userId: user.id })
+            } else {
               await handleSetReminder({
                 userId: user.id,
                 phone: cleanFromPhone,
                 language: lang,
                 message: processedMessage,
-                dateTimeText: item.dateTimeText || processedMessage,
-                reminderTitle: item.title,
+                dateTimeText: extractedData.dateTimeText || processedMessage,
+                reminderTitle: extractedData.reminderTitle || undefined,
                 prefix: abuseWarning
               })
-              results.push(item.title)
             }
-            logger.info(`Multi-reminder: set ${results.length} reminders`, { userId: user.id })
-          } else {
-            await handleSetReminder({
+            isHandled = true
+            break
+
+          case 'LIST_REMINDERS':
+            await handleListReminders({
               userId: user.id,
               phone: cleanFromPhone,
               language: lang,
-              message: processedMessage,
-              dateTimeText: extractedData.dateTimeText || processedMessage,
-              reminderTitle: extractedData.reminderTitle || undefined,
+            })
+            isHandled = true
+            break
+
+          case 'SNOOZE_REMINDER':
+            await handleSnoozeReminder({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              minutes: extractedData.snoozeMinutes,
+              customText: extractedData.dateTimeText || undefined,
               prefix: abuseWarning
             })
-          }
-          isHandled = true
-          break
+            isHandled = true
+            break
 
-        case 'LIST_REMINDERS':
-          await handleListReminders({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-          })
-          isHandled = true
-          break
+          case 'CANCEL_REMINDER':
+            await handleCancelReminder({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              titleHint: extractedData.reminderTitle || undefined,
+              isGenericSearch: extractedData.isGenericSearch,
+              prefix: abuseWarning
+            })
+            isHandled = true
+            break
 
-        // BUG-08 FIX: Added missing SNOOZE_REMINDER case
-        case 'SNOOZE_REMINDER':
-          await handleSnoozeReminder({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            minutes: extractedData.snoozeMinutes,
-            customText: extractedData.dateTimeText || undefined,
-            prefix: abuseWarning
-          })
-          isHandled = true
-          break
+          case 'ADD_TASK':
+            await handleAddTask({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              taskContent: extractedData.taskContent || processedMessage,
+              listName: extractedData.listName || 'general',
+              prefix: abuseWarning
+            })
+            isHandled = true
+            break
 
-        // BUG-08 FIX: Added missing CANCEL_REMINDER case
-        case 'CANCEL_REMINDER':
-          await handleCancelReminder({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            titleHint: extractedData.reminderTitle || undefined,
-            isGenericSearch: extractedData.isGenericSearch,
-            prefix: abuseWarning
-          })
-          isHandled = true
-          break
+          case 'LIST_TASKS':
+            await handleListTasks({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              listName: extractedData.listName || 'general',
+              isGenericSearch: extractedData.isGenericSearch,
+              prefix: abuseWarning
+            })
+            isHandled = true
+            break
 
-        case 'ADD_TASK':
-          await handleAddTask({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            taskContent: extractedData.taskContent || processedMessage,
-            listName: extractedData.listName || 'general',
-            prefix: abuseWarning
-          })
-          isHandled = true
-          break
+          case 'COMPLETE_TASK':
+            await handleCompleteTask({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              taskContent: extractedData.taskContent || processedMessage,
+              prefix: abuseWarning
+            })
+            isHandled = true
+            break
 
-        case 'LIST_TASKS':
-          await handleListTasks({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            listName: extractedData.listName || 'general',
-            isGenericSearch: extractedData.isGenericSearch,
-            prefix: abuseWarning
-          })
-          isHandled = true
-          break
+          case 'DELETE_TASK':
+            await handleDeleteTask({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              taskContent: extractedData.taskContent || processedMessage,
+              listName: extractedData.listName || undefined,
+              isGenericSearch: extractedData.isGenericSearch,
+              prefix: abuseWarning
+            })
+            isHandled = true
+            break
 
-        case 'COMPLETE_TASK':
-          await handleCompleteTask({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            taskContent: extractedData.taskContent || processedMessage,
-            prefix: abuseWarning
-          })
-          isHandled = true
-          break
+          case 'DELETE_LIST':
+            await handleDeleteList({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+              listName: extractedData.listName || 'general',
+              isGenericSearch: extractedData.isGenericSearch,
+              prefix: abuseWarning
+            })
+            isHandled = true
+            break
 
-        case 'DELETE_TASK':
-          await handleDeleteTask({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            taskContent: extractedData.taskContent || processedMessage,
-            listName: extractedData.listName || undefined,
-            isGenericSearch: extractedData.isGenericSearch,
-            prefix: abuseWarning
-          })
-          isHandled = true
-          break
+          case 'FIND_DOCUMENT':
+            try {
+              const foundDocId = await handleFindDocument({
+                userId: user.id,
+                phone: cleanFromPhone,
+                language: lang,
+                query: extractedData?.documentQuery
+                  || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
+                  || processedMessage,
+              })
+              if (foundDocId) {
+                await updateContext(user.id, { last_referenced_id: foundDocId as string })
+              }
+              isHandled = true
+            } catch (docErr) {
+              logger.error('FindDocument internal fail', { userId: user.id }, docErr as Error)
+            }
+            break
 
-        case 'DELETE_LIST':
-          await handleDeleteList({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            listName: extractedData.listName || 'general',
-            isGenericSearch: extractedData.isGenericSearch,
-            prefix: abuseWarning
-          })
-          isHandled = true
-          break
+          case 'LIST_DOCUMENTS':
+            await handleListDocuments({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+            })
+            isHandled = true
+            break
 
-        case 'FIND_DOCUMENT':
-          try {
-            const foundDocId = await handleFindDocument({
+          case 'DELETE_DOCUMENT':
+            await handleDeleteDocument({
               userId: user.id,
               phone: cleanFromPhone,
               language: lang,
               query: extractedData?.documentQuery
-                || processedMessage.replace(/(dikhao|show|bhejo|send|do|de|nikalo|lao|find|get|kahan|where)/gi, '').trim()
+                || processedMessage.replace(/(delete|hatao|mitao|remove|hata)/gi, '').trim()
                 || processedMessage,
             })
-            if (foundDocId) {
-              await updateContext(user.id, { last_referenced_id: foundDocId as string })
-            }
             isHandled = true
-          } catch (docErr) {
-            logger.error('FindDocument internal fail', { userId: user.id }, docErr as Error)
+            break
+
+          case 'GET_BRIEFING':
+            await handleGetBriefing({
+              userId: user.id,
+              phone: cleanFromPhone,
+              language: lang,
+            })
             isHandled = true
-          }
-          break
+            break
 
-        case 'LIST_DOCUMENTS':
-          await handleListDocuments({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-          })
-          isHandled = true
-          break
+          case 'HELP':
+            await sendWhatsAppMessage({ to: cleanFromPhone, message: helpMessage(lang) })
+            isHandled = true
+            break
 
-        case 'DELETE_DOCUMENT':
-          await handleDeleteDocument({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-            query: extractedData?.documentQuery
-              || processedMessage.replace(/(delete|hatao|mitao|remove|hata)/gi, '').trim()
-              || processedMessage,
-          })
-          isHandled = true
-          break
-
-        case 'GET_BRIEFING':
-          await handleGetBriefing({
-            userId: user.id,
-            phone: cleanFromPhone,
-            language: lang,
-          })
-          isHandled = true
-          break
-
-        case 'HELP':
-          await sendWhatsAppMessage({ to: cleanFromPhone, message: helpMessage(lang) })
-          isHandled = true
-          break
-
-        default:
-          break
+          default:
+            break
+        }
+      } catch (featureErr) {
+        logger.error('Feature handler switch/case crash', { userId: user.id, intent }, featureErr as Error)
+        // We do NOT call autoResponder here. We'll handle it below in the unified block.
       }
 
-      // ─── CONTEXT & HISTORY UPDATE ─────────────────────────
-      if (isHandled) {
+      // ─── 2. FINAL FALLBACK: AUTO-RESPONDER ─────────────
+      // Only call if NO feature was handled (either unknown intent or feature skipped result)
+      if (!isHandled) {
+        try {
+          const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId, user.id)
+          if (autoResp.success && autoResp.response) {
+            // Log history for general AI chat turns
+            await addToHistory(user.id, 'user', processedMessage)
+            await addToHistory(user.id, 'assistant', autoResp.response)
+          }
+        } catch (autoRespErr) {
+          logger.error('Auto-responder fatal fail', { userId: user.id }, autoRespErr as Error)
+        }
+      } else {
+        // Feature handled — log history + status mark
         try {
           await updateContext(user.id, {
             last_intent: intent,
@@ -548,56 +564,27 @@ export async function POST(req: NextRequest) {
             last_document_query: extractedData?.documentQuery || ctx.last_document_query || undefined,
             last_referenced_id: extractedData?.lastReferencedId || ctx.last_referenced_id || undefined
           })
-          // BUG-17 FIX: Always log user message to history for feature handlers too
           await addToHistory(user.id, 'user', processedMessage)
-
-          // Keep assistant side in session history as well so LLM gets full turn-by-turn context.
           const latestReply = await getLatestOutgoingReply(cleanToPhone, cleanFromPhone)
-          if (latestReply) {
-            await addToHistory(user.id, 'assistant', latestReply)
-          }
-        } catch (ctxErr) {
-          logger.warn('Session context update failed (silent)', { userId: user.id, error: (ctxErr as Error).message })
-        }
-      } else {
-        // Not handled by any feature? Use Auto-Responder (pass userId for unified history)
-        const autoResp = await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId, user.id)
-        if (autoResp.response) {
-          // BUG-17 FIX: Store full conversation turn in history
-          await addToHistory(user.id, 'user', processedMessage)
-          await addToHistory(user.id, 'assistant', autoResp.response)
-        }
-      }
+          if (latestReply) await addToHistory(user.id, 'assistant', latestReply)
 
-      // Mark as responded ATOMICALLY only if handled by a feature
-      // (The autoResponder handles its own claim logic internally)
-      if (isHandled) {
-        try {
+          // Mark as responded ATOMICALLY for feature paths
           await supabaseAdmin.from('whatsapp_messages')
             .update({ is_responded: true, response_sent_at: new Date().toISOString() })
             .eq('message_id', messageId)
-        } catch (markErr) {
-          logger.error('Failed to mark as responded', { messageId }, markErr as Error)
+        } catch (ctxErr) {
+          logger.warn('Session history update skipped (feature handled path)', { error: (ctxErr as Error).message })
         }
       }
-
     } catch (featureErr) {
-      logger.error('Feature handler error', { userId: user.id, intent }, featureErr as Error)
-
-      if (!isHandled) {
-        try {
-          await generateAutoResponse(cleanFromPhone, cleanToPhone, processedMessage, messageId, user.id)
-        } catch (fallbackErr) {
-          logger.error('Auto-responder fail', fallbackErr as Error)
-        }
-      }
+      logger.error('Message handling loop crash', { userId: user.id }, featureErr as Error)
     }
 
     logger.info('✅ Message processed successfully', { userId: user.id, traceId })
     return NextResponse.json({ ok: true })
 
   } catch (err) {
-    logger.error('Webhook error', { traceId }, err as Error)
+    logger.error('Webhook top-level crash', { traceId }, err as Error)
     return createErrorResponse(err, traceId)
   }
 }

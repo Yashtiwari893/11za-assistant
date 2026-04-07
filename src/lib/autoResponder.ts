@@ -132,26 +132,20 @@ function buildSystemPrompt(phoneSpecificPrompt: string, documentContext?: string
  * This upsert approach is atomic: only one worker wins.
  */
 async function claimMessageForProcessing(messageId: string): Promise<boolean> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('whatsapp_messages')
     .update({ is_responded: true, response_sent_at: new Date().toISOString() })
     .eq('message_id', messageId)
-    .eq('is_responded', false)   // Only update if NOT yet responded — atomic claim
+    .eq('is_responded', false) // Truly atomic: only update if it was false
+    .select('id')
+    .maybeSingle()
 
-  // If error or no rows matched (already claimed), skip
   if (error) {
     console.warn('[autoResponder] claimMessageForProcessing error:', error.message)
     return false
   }
 
-  // Check if our update actually matched a row
-  const { data } = await supabase
-    .from('whatsapp_messages')
-    .select('id')
-    .eq('message_id', messageId)
-    .eq('is_responded', true)
-    .maybeSingle()
-
+  // data will only exist if the update actually matched a row (i.e., we won the race)
   return !!data
 }
 
