@@ -309,10 +309,52 @@ export async function handleCancelReminder(params: {
   phone: string
   language: Language
   titleHint?: string
+  isGenericSearch?: boolean
   prefix?: string
 }) {
-  const { userId, phone, language, titleHint, prefix = '' } = params
+  const { userId, phone, language, titleHint, isGenericSearch, prefix = '' } = params
 
+  // ─── CASE 1: BULK CANCEL (All reminders) ────────────────────
+  const isBulk = isGenericSearch || (titleHint && /\b(all|sab|everything|pure|complete|sabke sab)\b/i.test(titleHint))
+
+  if (isBulk) {
+    const { data: pending, error: fetchError } = await supabase
+      .from('reminders')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+
+    if (fetchError || !pending || pending.length === 0) {
+      await sendWhatsAppMessage({
+        to: phone,
+        message: prefix + (language === 'hi'
+          ? '📭 Cancel karne ke liye koi pending reminder nahi mila।'
+          : '📭 No pending reminders found to cancel.')
+      })
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('reminders')
+      .update({ status: 'cancelled' })
+      .eq('user_id', userId)
+      .eq('status', 'pending')
+
+    if (updateError) {
+      await sendWhatsAppMessage({ to: phone, message: prefix + errorMessage(language) })
+      return
+    }
+
+    await sendWhatsAppMessage({
+      to: phone,
+      message: prefix + (language === 'hi'
+        ? `🗑️ Aapke saare (${pending.length}) pending reminders cancel ho gaye hain!`
+        : `🗑️ All your pending reminders (${pending.length}) have been cancelled!`)
+    })
+    return
+  }
+
+  // ─── CASE 2: CANCEL BY TITLE ────────────────────────────────
   if (titleHint) {
     const { data: found } = await supabase
       .from('reminders')
@@ -344,6 +386,7 @@ export async function handleCancelReminder(params: {
     return
   }
 
+  // ─── CASE 3: CANCEL MOST RECENT ─────────────────────────────
   const { data: recent } = await supabase
     .from('reminders')
     .select('id, title')

@@ -414,6 +414,7 @@ export async function POST(req: NextRequest) {
             phone: cleanFromPhone,
             language: lang,
             titleHint: extractedData.reminderTitle || undefined,
+            isGenericSearch: extractedData.isGenericSearch,
             prefix: abuseWarning
           })
           isHandled = true
